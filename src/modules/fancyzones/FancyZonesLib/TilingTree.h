@@ -19,6 +19,15 @@ public:
         Stacked // divider is horizontal, children are top and bottom
     };
 
+    // Side of a tile a dragged window is dropped on
+    enum class Side
+    {
+        Left,
+        Top,
+        Right,
+        Bottom
+    };
+
     using WindowRects = std::vector<std::pair<HWND, RECT>>;
 
     // A resized tile's border stops this far from the far edges of its split
@@ -35,6 +44,21 @@ public:
      * @returns false if window is null or already in the tree.
      */
     bool Insert(HWND window, HWND target, const RECT& area, int spacing);
+
+    /**
+     * Split target's tile and put window on the given side of it, as when a window is dropped there.
+     * In an empty tree window becomes the only tile.
+     *
+     * @returns false if window is null or already in the tree, or target is not in a tree that has tiles.
+     */
+    bool InsertBeside(HWND window, HWND target, Side side);
+
+    /**
+     * Take window out of its tile and put it on the given side of target's tile.
+     *
+     * @returns false if window or target is not in the tree, or they are the same window.
+     */
+    bool MoveBeside(HWND window, HWND target, Side side);
 
     /**
      * @returns false if window is not in the tree.
@@ -60,8 +84,10 @@ public:
     /**
      * Tile rectangles in depth-first order. Area is inset by spacing,
      * and neighboring tiles are separated by spacing.
+     *
+     * @param without window to leave out, as if it had been removed: its sibling takes its space.
      */
-    WindowRects CalculateRects(const RECT& area, int spacing) const;
+    WindowRects CalculateRects(const RECT& area, int spacing, HWND without = nullptr) const;
 
     /**
      * Move the dividers along the edges where newRect differs from window's tile, as when the
@@ -71,6 +97,16 @@ public:
      * @returns true if any divider moved.
      */
     bool ResizeTile(HWND window, const RECT& newRect, const RECT& area, int spacing);
+
+    /**
+     * Side of tile nearest to point, with the tile cut along its diagonals into four triangles.
+     */
+    static Side SideAt(const RECT& tile, POINT point) noexcept;
+
+    /**
+     * Part of tile that a window dropped on the given side of it gets.
+     */
+    static RECT DropRect(const RECT& tile, Side side, int spacing) noexcept;
 
 private:
     struct Node
@@ -86,9 +122,10 @@ private:
     };
 
     Node* FindLeaf(HWND window) const noexcept;
+    void SplitLeaf(Node* leaf, HWND window, Orientation orientation, bool windowFirst);
     std::vector<std::pair<Node*, RECT>> Splits(const RECT& area, int spacing) const;
     static bool SetDividerPosition(Node* split, const RECT& rect, LONG position, int spacing) noexcept;
-    static void Collect(const Node* node, const RECT& rect, int spacing, WindowRects& result);
+    static void Collect(const Node* node, const RECT& rect, int spacing, HWND without, WindowRects& result);
 
     std::unique_ptr<Node> m_root;
     std::vector<HWND> m_insertionOrder;

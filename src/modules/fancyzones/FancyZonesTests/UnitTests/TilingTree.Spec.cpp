@@ -319,6 +319,138 @@ namespace FancyZonesUnitTests
             Assert::AreEqual(1100L + spacing, RectOf(rects, m_second).left);
         }
 
+        TEST_METHOD (SideAtPicksNearestEdgeByDiagonals)
+        {
+            const RECT tile{ 100, 100, 500, 300 };
+            Assert::IsTrue(TilingTree::Side::Left == TilingTree::SideAt(tile, POINT{ 120, 200 }));
+            Assert::IsTrue(TilingTree::Side::Right == TilingTree::SideAt(tile, POINT{ 480, 200 }));
+            Assert::IsTrue(TilingTree::Side::Top == TilingTree::SideAt(tile, POINT{ 300, 110 }));
+            Assert::IsTrue(TilingTree::Side::Bottom == TilingTree::SideAt(tile, POINT{ 300, 290 }));
+
+            // Measured relative to the tile's size: in a wide tile, a point near the top middle is still on top
+            Assert::IsTrue(TilingTree::Side::Top == TilingTree::SideAt(tile, POINT{ 200, 140 }));
+            Assert::IsTrue(TilingTree::Side::Left == TilingTree::SideAt(tile, POINT{ 140, 180 }));
+        }
+
+        TEST_METHOD (DropRectIsHalfOfTileOnThatSide)
+        {
+            const RECT tile{ 0, 0, 1000, 600 };
+            CustomAssert::AreEqual(RECT{ 0, 0, 500, 600 }, TilingTree::DropRect(tile, TilingTree::Side::Left, 0));
+            CustomAssert::AreEqual(RECT{ 500, 0, 1000, 600 }, TilingTree::DropRect(tile, TilingTree::Side::Right, 0));
+            CustomAssert::AreEqual(RECT{ 0, 0, 1000, 300 }, TilingTree::DropRect(tile, TilingTree::Side::Top, 0));
+            CustomAssert::AreEqual(RECT{ 0, 300, 1000, 600 }, TilingTree::DropRect(tile, TilingTree::Side::Bottom, 0));
+        }
+
+        TEST_METHOD (InsertBesideEachSide)
+        {
+            const std::pair<TilingTree::Side, RECT> cases[] = {
+                { TilingTree::Side::Left, RECT{ 0, 0, 960, 1080 } },
+                { TilingTree::Side::Right, RECT{ 960, 0, 1920, 1080 } },
+                { TilingTree::Side::Top, RECT{ 0, 0, 1920, 540 } },
+                { TilingTree::Side::Bottom, RECT{ 0, 540, 1920, 1080 } },
+            };
+
+            for (const auto& [side, expected] : cases)
+            {
+                TilingTree tree;
+                tree.Insert(m_first, nullptr, m_landscape, 0);
+                Assert::IsTrue(tree.InsertBeside(m_second, m_first, side));
+
+                const auto rects = tree.CalculateRects(m_landscape, 0);
+                CustomAssert::AreEqual(expected, RectOf(rects, m_second));
+                CustomAssert::AreEqual(TilingTree::DropRect(m_landscape, side, 0), RectOf(rects, m_second));
+            }
+        }
+
+        TEST_METHOD (InsertBesideInEmptyTreeFillsArea)
+        {
+            TilingTree tree;
+            Assert::IsTrue(tree.InsertBeside(m_first, nullptr, TilingTree::Side::Right));
+            CustomAssert::AreEqual(m_landscape, RectOf(tree.CalculateRects(m_landscape, 0), m_first));
+            Assert::IsTrue(m_first == tree.NewestWindow());
+        }
+
+        TEST_METHOD (InsertBesideUnknownTargetOrTiledWindowFails)
+        {
+            TilingTree tree;
+            tree.Insert(m_first, nullptr, m_landscape, 0);
+            Assert::IsFalse(tree.InsertBeside(m_second, FakeWindow(42), TilingTree::Side::Left));
+            Assert::IsFalse(tree.InsertBeside(m_first, m_first, TilingTree::Side::Left));
+            Assert::IsFalse(tree.InsertBeside(nullptr, m_first, TilingTree::Side::Left));
+            Assert::AreEqual(size_t{ 1 }, tree.Size());
+        }
+
+        TEST_METHOD (MoveBesideTakesWindowOutOfItsTile)
+        {
+            TilingTree tree;
+            tree.Insert(m_first, nullptr, m_landscape, 0);
+            tree.Insert(m_second, m_first, m_landscape, 0);
+            tree.Insert(m_third, m_second, m_landscape, 0);
+
+            // m_first leaves the left half, so the right column fills the screen, then splits m_third's tile
+            Assert::IsTrue(tree.MoveBeside(m_first, m_third, TilingTree::Side::Right));
+
+            const auto rects = tree.CalculateRects(m_landscape, 0);
+            CustomAssert::AreEqual(RECT{ 0, 0, 1920, 540 }, RectOf(rects, m_second));
+            CustomAssert::AreEqual(RECT{ 0, 540, 960, 1080 }, RectOf(rects, m_third));
+            CustomAssert::AreEqual(RECT{ 960, 540, 1920, 1080 }, RectOf(rects, m_first));
+        }
+
+        TEST_METHOD (MoveBesideSiblingSwapsSides)
+        {
+            TilingTree tree;
+            tree.Insert(m_first, nullptr, m_landscape, 0);
+            tree.Insert(m_second, m_first, m_landscape, 0);
+
+            Assert::IsTrue(tree.MoveBeside(m_first, m_second, TilingTree::Side::Right));
+
+            const auto rects = tree.CalculateRects(m_landscape, 0);
+            CustomAssert::AreEqual(RECT{ 0, 0, 960, 1080 }, RectOf(rects, m_second));
+            CustomAssert::AreEqual(RECT{ 960, 0, 1920, 1080 }, RectOf(rects, m_first));
+        }
+
+        TEST_METHOD (MoveBesideItselfOrUnknownWindowFails)
+        {
+            TilingTree tree;
+            tree.Insert(m_first, nullptr, m_landscape, 0);
+            tree.Insert(m_second, m_first, m_landscape, 0);
+
+            Assert::IsFalse(tree.MoveBeside(m_first, m_first, TilingTree::Side::Right));
+            Assert::IsFalse(tree.MoveBeside(m_third, m_first, TilingTree::Side::Right));
+            Assert::IsFalse(tree.MoveBeside(m_first, m_third, TilingTree::Side::Right));
+            CustomAssert::AreEqual(RECT{ 0, 0, 960, 1080 }, RectOf(tree.CalculateRects(m_landscape, 0), m_first));
+        }
+
+        TEST_METHOD (CalculateRectsWithoutWindowMatchesRemovingIt)
+        {
+            TilingTree tree;
+            tree.Insert(m_first, nullptr, m_landscape, 0);
+            tree.Insert(m_second, m_first, m_landscape, 0);
+            tree.Insert(m_third, m_second, m_landscape, 0);
+
+            for (HWND window : { m_first, m_second, m_third })
+            {
+                const auto without = tree.CalculateRects(m_landscape, 0, window);
+
+                TilingTree removed;
+                removed.Insert(m_first, nullptr, m_landscape, 0);
+                removed.Insert(m_second, m_first, m_landscape, 0);
+                removed.Insert(m_third, m_second, m_landscape, 0);
+                removed.Remove(window);
+                const auto expected = removed.CalculateRects(m_landscape, 0);
+
+                Assert::AreEqual(expected.size(), without.size());
+                for (const auto& [tileWindow, rect] : expected)
+                {
+                    CustomAssert::AreEqual(rect, RectOf(without, tileWindow));
+                }
+            }
+
+            TilingTree single;
+            single.Insert(m_first, nullptr, m_landscape, 0);
+            Assert::IsTrue(single.CalculateRects(m_landscape, 0, m_first).empty());
+        }
+
         TEST_METHOD (ClearRemovesAllWindows)
         {
             TilingTree tree;

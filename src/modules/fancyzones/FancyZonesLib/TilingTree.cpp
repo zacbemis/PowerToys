@@ -79,24 +79,46 @@ bool TilingTree::Insert(HWND window, HWND target, const RECT& area, int spacing)
         }
     }
 
-    // Turn the target leaf into a split that holds the target window first and the new window second
-    auto first = std::make_unique<Node>();
-    first->window = targetLeaf->window;
-    first->parent = targetLeaf;
-
-    auto second = std::make_unique<Node>();
-    second->window = window;
-    second->parent = targetLeaf;
-
     const bool wide = (targetRect.right - targetRect.left) >= (targetRect.bottom - targetRect.top);
-    targetLeaf->orientation = wide ? Orientation::SideBySide : Orientation::Stacked;
-    targetLeaf->ratio = 0.5;
-    targetLeaf->window = nullptr;
-    targetLeaf->first = std::move(first);
-    targetLeaf->second = std::move(second);
-
-    m_insertionOrder.push_back(window);
+    SplitLeaf(targetLeaf, window, wide ? Orientation::SideBySide : Orientation::Stacked, false);
     return true;
+}
+
+bool TilingTree::InsertBeside(HWND window, HWND target, Side side)
+{
+    if (!window || Contains(window))
+    {
+        return false;
+    }
+
+    if (!m_root)
+    {
+        m_root = std::make_unique<Node>();
+        m_root->window = window;
+        m_insertionOrder.push_back(window);
+        return true;
+    }
+
+    Node* targetLeaf = FindLeaf(target);
+    if (!targetLeaf)
+    {
+        return false;
+    }
+
+    const bool sideBySide = side == Side::Left || side == Side::Right;
+    SplitLeaf(targetLeaf, window, sideBySide ? Orientation::SideBySide : Orientation::Stacked, side == Side::Left || side == Side::Top);
+    return true;
+}
+
+bool TilingTree::MoveBeside(HWND window, HWND target, Side side)
+{
+    if (window == target || !Contains(window) || !Contains(target))
+    {
+        return false;
+    }
+
+    Remove(window);
+    return InsertBeside(window, target, side);
 }
 
 bool TilingTree::Remove(HWND window)
@@ -164,12 +186,12 @@ std::vector<HWND> TilingTree::Windows() const
     return result;
 }
 
-TilingTree::WindowRects TilingTree::CalculateRects(const RECT& area, int spacing) const
+TilingTree::WindowRects TilingTree::CalculateRects(const RECT& area, int spacing, HWND without) const
 {
     WindowRects result;
-    if (m_root)
+    if (m_root && !(m_root->IsLeaf() && m_root->window == without))
     {
-        Collect(m_root.get(), Inset(area, spacing), spacing, result);
+        Collect(m_root.get(), Inset(area, spacing), spacing, without, result);
     }
 
     return result;
@@ -238,6 +260,57 @@ bool TilingTree::ResizeTile(HWND window, const RECT& newRect, const RECT& area, 
     return moved;
 }
 
+TilingTree::Side TilingTree::SideAt(const RECT& tile, POINT point) noexcept
+{
+    // Comparing the distances to each edge, relative to the tile's size, cuts it along its diagonals
+    const double width = max(1L, tile.right - tile.left);
+    const double height = max(1L, tile.bottom - tile.top);
+    const double left = (static_cast<double>(point.x) - tile.left) / width;
+    const double top = (static_cast<double>(point.y) - tile.top) / height;
+    const double right = 1 - left;
+    const double bottom = 1 - top;
+
+    const double nearest = min(min(left, right), min(top, bottom));
+    if (nearest == left)
+    {
+        return Side::Left;
+    }
+
+    if (nearest == right)
+    {
+        return Side::Right;
+    }
+
+    return nearest == top ? Side::Top : Side::Bottom;
+}
+
+RECT TilingTree::DropRect(const RECT& tile, Side side, int spacing) noexcept
+{
+    const bool sideBySide = side == Side::Left || side == Side::Right;
+    const auto [first, second] = SplitRect(tile, sideBySide ? Orientation::SideBySide : Orientation::Stacked, 0.5, spacing);
+    return side == Side::Left || side == Side::Top ? first : second;
+}
+
+void TilingTree::SplitLeaf(Node* leaf, HWND window, Orientation orientation, bool windowFirst)
+{
+    // The leaf becomes a split holding its window and the new one side by side or stacked
+    auto existing = std::make_unique<Node>();
+    existing->window = leaf->window;
+    existing->parent = leaf;
+
+    auto added = std::make_unique<Node>();
+    added->window = window;
+    added->parent = leaf;
+
+    leaf->orientation = orientation;
+    leaf->ratio = 0.5;
+    leaf->window = nullptr;
+    leaf->first = windowFirst ? std::move(added) : std::move(existing);
+    leaf->second = windowFirst ? std::move(existing) : std::move(added);
+
+    m_insertionOrder.push_back(window);
+}
+
 std::vector<std::pair<TilingTree::Node*, RECT>> TilingTree::Splits(const RECT& area, int spacing) const
 {
     std::vector<std::pair<Node*, RECT>> result;
@@ -303,7 +376,7 @@ TilingTree::Node* TilingTree::FindLeaf(HWND window) const noexcept
     return find(m_root.get());
 }
 
-void TilingTree::Collect(const Node* node, const RECT& rect, int spacing, WindowRects& result)
+void TilingTree::Collect(const Node* node, const RECT& rect, int spacing, HWND without, WindowRects& result)
 {
     if (node->IsLeaf())
     {
@@ -311,7 +384,21 @@ void TilingTree::Collect(const Node* node, const RECT& rect, int spacing, Window
         return;
     }
 
+    // Like Remove, a left out window's sibling takes the whole split
+    const auto isLeftOut = [without](const Node* child) { return child->IsLeaf() && child->window == without; };
+    if (isLeftOut(node->first.get()))
+    {
+        Collect(node->second.get(), rect, spacing, without, result);
+        return;
+    }
+
+    if (isLeftOut(node->second.get()))
+    {
+        Collect(node->first.get(), rect, spacing, without, result);
+        return;
+    }
+
     const auto [first, second] = SplitRect(rect, node->orientation, node->ratio, spacing);
-    Collect(node->first.get(), first, spacing, result);
-    Collect(node->second.get(), second, spacing, result);
+    Collect(node->first.get(), first, spacing, without, result);
+    Collect(node->second.get(), second, spacing, without, result);
 }
