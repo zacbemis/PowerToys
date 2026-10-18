@@ -46,6 +46,7 @@ namespace TileSizeCheck
     }
 }
 
+
 using namespace FancyZonesUtils;
 
 namespace
@@ -351,24 +352,12 @@ void WorkArea::ReflowTiles()
         return;
     }
 
-    const auto rects = AutomaticTiling::Tree(m_uniqueId).CalculateRects(TileArea(), AutomaticTiling::TileSpacing);
-
-    ZonesMap zones;
-    for (size_t i = 0; i < rects.size(); i++)
-    {
-        const auto index = static_cast<ZoneIndex>(i);
-        zones.emplace(index, Zone(rects[i].second, index));
-    }
-
-    m_layout->SetZones(std::move(zones));
-
+    const auto rects = ApplyTileZones();
     for (size_t i = 0; i < rects.size(); i++)
     {
         // Placing a window again where it already is makes some apps drift, so only move windows that need it
         const auto& [window, tile] = rects[i];
-        const auto frame = TileSizeCheck::VisibleFrame(window);
-        const RECT screenTile = ToScreen(tile);
-        const bool inTile = frame.has_value() && EqualRect(&frame.value(), &screenTile);
+        const bool inTile = IsInTile(window, tile);
         Snap(window, { static_cast<ZoneIndex>(i) }, !inTile);
 
         if (!inTile && m_forcedSizeWindows.contains(window))
@@ -384,9 +373,42 @@ void WorkArea::ReflowTiles()
     }
 }
 
+void WorkArea::BeginTileResize(HWND window)
+{
+    m_resizingWindow = window;
+}
+
+void WorkArea::UpdateTileResize(HWND window)
+{
+    if (window != m_resizingWindow || !IsAutomaticTiling())
+    {
+        return;
+    }
+
+    const auto frame = TileSizeCheck::VisibleFrame(window);
+    if (!frame.has_value())
+    {
+        return;
+    }
+
+    // The dragged border moves the dividers along it, and the tiles on their other side follow
+    RECT rect = frame.value();
+    MapWindowRect(nullptr, m_window, &rect);
+    if (AutomaticTiling::Tree(m_uniqueId).ResizeTile(window, rect, TileArea(), AutomaticTiling::TileSpacing))
+    {
+        ReflowTilesLive(window);
+    }
+}
+
+void WorkArea::EndTileDrag()
+{
+    m_resizingWindow = nullptr;
+    ReflowTiles();
+}
 void WorkArea::CheckTiles()
 {
-    if (!IsAutomaticTiling())
+    // Tiles are only checked once a drag has ended
+    if (!IsAutomaticTiling() || m_resizingWindow)
     {
         return;
     }
@@ -454,6 +476,39 @@ RECT WorkArea::ToScreen(RECT tile) const noexcept
     return tile;
 }
 
+TilingTree::WindowRects WorkArea::ApplyTileZones()
+{
+    auto rects = AutomaticTiling::Tree(m_uniqueId).CalculateRects(TileArea(), AutomaticTiling::TileSpacing);
+
+    ZonesMap zones;
+    for (size_t i = 0; i < rects.size(); i++)
+    {
+        const auto index = static_cast<ZoneIndex>(i);
+        zones.emplace(index, Zone(rects[i].second, index));
+    }
+
+    m_layout->SetZones(std::move(zones));
+    return rects;
+}
+
+bool WorkArea::IsInTile(HWND window, const RECT& tile) const noexcept
+{
+    const auto frame = TileSizeCheck::VisibleFrame(window);
+    const RECT screenTile = ToScreen(tile);
+    return frame.has_value() && EqualRect(&frame.value(), &screenTile);
+}
+
+void WorkArea::ReflowTilesLive(HWND resizingWindow)
+{
+    // Keeping up with the mouse, windows are moved directly instead of snapped, and aren't checked afterwards
+    for (const auto& [window, tile] : ApplyTileZones())
+    {
+        if (window != resizingWindow && !IsInTile(window, tile))
+        {
+            ForceTileSize(window, tile);
+        }
+    }
+}
 #pragma region private
 
 bool WorkArea::InitWindow(HINSTANCE hinstance)
@@ -616,6 +671,7 @@ LRESULT WorkArea::WndProc(UINT message, WPARAM wparam, LPARAM lparam) noexcept
             CheckTiles();
             return 0;
         }
+
 
         return DefWindowProc(m_window, message, wparam, lparam);
 

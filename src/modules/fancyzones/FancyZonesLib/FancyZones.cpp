@@ -345,7 +345,10 @@ public:
     void WindowCreated(HWND window) noexcept;
     bool TileWindow(HWND window) noexcept;
     void UntileWindow(HWND window) noexcept;
-    void ReflowTiledWindow(HWND window) noexcept;
+    WorkArea* WorkAreaTiling(HWND window) const noexcept;
+    void BeginTileDrag(HWND window) noexcept;
+    void UpdateTileDrag(HWND window) noexcept;
+    void EndTileDrag(HWND window) noexcept;
     void ToggleEditor() noexcept;
 
     LRESULT WndProc(HWND, UINT, WPARAM, LPARAM) noexcept;
@@ -713,12 +716,9 @@ bool FancyZones::TileWindow(HWND window) noexcept
     }
 
     // Show, create and uncloak events all arrive for the same window
-    for (const auto& [_, workArea] : m_workAreaConfiguration.GetAllWorkAreas())
+    if (WorkAreaTiling(window))
     {
-        if (workArea && workArea->IsTiled(window))
-        {
-            return true;
-        }
+        return true;
     }
 
     auto workArea = m_workAreaConfiguration.GetWorkAreaFromWindow(window);
@@ -727,35 +727,53 @@ bool FancyZones::TileWindow(HWND window) noexcept
 
 void FancyZones::UntileWindow(HWND window) noexcept
 {
-    if (!AutomaticTiling::IsEnabled())
+    if (auto workArea = WorkAreaTiling(window))
     {
-        return;
-    }
-
-    for (const auto& [_, workArea] : m_workAreaConfiguration.GetAllWorkAreas())
-    {
-        if (workArea && workArea->Untile(window))
-        {
-            return;
-        }
+        workArea->Untile(window);
     }
 }
 
-void FancyZones::ReflowTiledWindow(HWND window) noexcept
+WorkArea* FancyZones::WorkAreaTiling(HWND window) const noexcept
 {
     if (!AutomaticTiling::IsEnabled())
     {
-        return;
+        return nullptr;
     }
 
-    // Dragging or resizing a tiled window puts it back into its tile
     for (const auto& [_, workArea] : m_workAreaConfiguration.GetAllWorkAreas())
     {
         if (workArea && workArea->IsTiled(window))
         {
-            workArea->ReflowTiles();
-            return;
+            return workArea.get();
         }
+    }
+
+    return nullptr;
+}
+
+void FancyZones::BeginTileDrag(HWND window) noexcept
+{
+    // Only a border drag resizes tiles, a moved window just goes back into its tile when dropped
+    auto workArea = WorkAreaTiling(window);
+    if (workArea && FancyZonesWindowUtils::IsCursorTypeIndicatingSizeEvent())
+    {
+        workArea->BeginTileResize(window);
+    }
+}
+
+void FancyZones::UpdateTileDrag(HWND window) noexcept
+{
+    if (auto workArea = WorkAreaTiling(window))
+    {
+        workArea->UpdateTileResize(window);
+    }
+}
+
+void FancyZones::EndTileDrag(HWND window) noexcept
+{
+    if (auto workArea = WorkAreaTiling(window))
+    {
+        workArea->EndTileDrag();
     }
 }
 
@@ -1075,11 +1093,13 @@ LRESULT FancyZones::WndProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 MoveSizeStart(hwnd, monitor);
                 MoveSizeUpdate(monitor, ptScreen);
             }
+
+            BeginTileDrag(hwnd);
         }
         else if (message == WM_PRIV_MOVESIZEEND)
         {
             MoveSizeEnd();
-            ReflowTiledWindow(reinterpret_cast<HWND>(wparam));
+            EndTileDrag(reinterpret_cast<HWND>(wparam));
         }
         else if (message == WM_PRIV_LOCATIONCHANGE)
         {
@@ -1087,6 +1107,8 @@ LRESULT FancyZones::WndProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
             {
                 MoveSizeUpdate(monitor, ptScreen);
             }
+
+            UpdateTileDrag(reinterpret_cast<HWND>(wparam));
         }
         else if (message == WM_PRIV_WINDOWCREATED)
         {

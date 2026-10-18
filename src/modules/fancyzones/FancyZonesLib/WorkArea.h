@@ -5,6 +5,7 @@
 
 #include <FancyZonesLib/Layout.h>
 #include <FancyZonesLib/LayoutAssignedWindows.h>
+#include <FancyZonesLib/TilingTree.h>
 
 class ZonesOverlay;
 
@@ -68,6 +69,11 @@ public:
     bool Untile(HWND window);
     void ReflowTiles();
 
+    // Dragging a tiled window's border resizes the tiles next to it along with it
+    void BeginTileResize(HWND window);
+    void UpdateTileResize(HWND window);
+    void EndTileDrag();
+
 protected:
     static LRESULT CALLBACK s_WndProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) noexcept;
 
@@ -81,6 +87,9 @@ private:
     void ForceTileSize(HWND window, const RECT& tile);
     RECT TileArea() const noexcept;
     RECT ToScreen(RECT tile) const noexcept;
+    TilingTree::WindowRects ApplyTileZones();
+    bool IsInTile(HWND window, const RECT& tile) const noexcept;
+    void ReflowTilesLive(HWND resizingWindow);
     void SetWorkAreaWindowAsTopmost(HWND draggedWindow) noexcept;
 
     LRESULT WndProc(UINT message, WPARAM wparam, LPARAM lparam) noexcept;
@@ -94,4 +103,5 @@ private:
     std::unordered_set<HWND> m_misplacedWindows; // tiled windows seen away from their tile once
     std::unordered_set<HWND> m_selfPlacingWindows; // tiled windows that keep moving away from their tile
     std::unordered_set<HWND> m_forcedSizeWindows; // tiled windows whose minimum size is bigger than their tile
+    HWND m_resizingWindow{}; // tiled window whose border is being dragged
 };
