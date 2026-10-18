@@ -346,9 +346,10 @@ public:
     bool TileWindow(HWND window) noexcept;
     void UntileWindow(HWND window) noexcept;
     WorkArea* WorkAreaTiling(HWND window) const noexcept;
-    void BeginTileDrag(HWND window) noexcept;
-    void UpdateTileDrag(HWND window) noexcept;
-    void EndTileDrag(HWND window) noexcept;
+    WorkArea* WorkAreaAt(POINT point) const noexcept;
+    bool BeginTileDrag(HWND window) noexcept;
+    void UpdateTileDrag(HWND window, POINT cursor) noexcept;
+    void EndTileDrag(HWND window, POINT cursor) noexcept;
     void ToggleEditor() noexcept;
 
     LRESULT WndProc(HWND, UINT, WPARAM, LPARAM) noexcept;
@@ -394,6 +395,14 @@ private:
     HWND m_window{};
     std::unique_ptr<WindowMouseSnap> m_windowMouseSnapper{};
     WindowKeyboardSnap m_windowKeyboardSnapper{};
+
+    // Window being moved or resized while automatic tiling is enabled
+    struct TileDragState
+    {
+        HWND window{};
+        bool resizing{};
+        HMONITOR dropMonitor{}; // monitor showing where the window would be dropped
+    } m_tileDrag;
     WorkAreaConfiguration m_workAreaConfiguration;
     DraggingState m_draggingState;
     bool m_monitorRotationPreviewActive = false;
@@ -751,29 +760,113 @@ WorkArea* FancyZones::WorkAreaTiling(HWND window) const noexcept
     return nullptr;
 }
 
-void FancyZones::BeginTileDrag(HWND window) noexcept
+WorkArea* FancyZones::WorkAreaAt(POINT point) const noexcept
 {
-    // Only a border drag resizes tiles, a moved window just goes back into its tile when dropped
+    const HMONITOR monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONULL);
+    return monitor ? m_workAreaConfiguration.GetWorkArea(monitor) : nullptr;
+}
+
+bool FancyZones::BeginTileDrag(HWND window) noexcept
+{
+    if (!AutomaticTiling::IsEnabled())
+    {
+        return false;
+    }
+
+    // Any moved window may be dropped on tiles, but only a tiled window's border drag resizes them
+    m_tileDrag = { window, FancyZonesWindowUtils::IsCursorTypeIndicatingSizeEvent() };
+
     auto workArea = WorkAreaTiling(window);
-    if (workArea && FancyZonesWindowUtils::IsCursorTypeIndicatingSizeEvent())
+    if (workArea && m_tileDrag.resizing)
     {
         workArea->BeginTileResize(window);
     }
+
+    // Tiled windows are placed by their tiles rather than snapped into zones
+    return workArea != nullptr;
 }
 
-void FancyZones::UpdateTileDrag(HWND window) noexcept
+void FancyZones::UpdateTileDrag(HWND window, POINT cursor) noexcept
 {
-    if (auto workArea = WorkAreaTiling(window))
+    if (window != m_tileDrag.window)
     {
-        workArea->UpdateTileResize(window);
+        return;
+    }
+
+    if (m_tileDrag.resizing)
+    {
+        if (auto workArea = WorkAreaTiling(window))
+        {
+            workArea->UpdateTileResize(window);
+        }
+
+        return;
+    }
+
+    // Show where the window would go, on whichever monitor it is over
+    const HMONITOR monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL);
+    if (m_tileDrag.dropMonitor && m_tileDrag.dropMonitor != monitor)
+    {
+        if (auto previous = m_workAreaConfiguration.GetWorkArea(m_tileDrag.dropMonitor))
+        {
+            previous->HideTileDrop();
+        }
+    }
+
+    m_tileDrag.dropMonitor = monitor;
+    if (auto workArea = WorkAreaAt(cursor))
+    {
+        workArea->ShowTileDrop(window, cursor);
     }
 }
 
-void FancyZones::EndTileDrag(HWND window) noexcept
+void FancyZones::EndTileDrag(HWND window, POINT cursor) noexcept
 {
-    if (auto workArea = WorkAreaTiling(window))
+    if (m_tileDrag.dropMonitor)
     {
-        workArea->EndTileDrag();
+        if (auto previous = m_workAreaConfiguration.GetWorkArea(m_tileDrag.dropMonitor))
+        {
+            previous->HideTileDrop();
+        }
+    }
+
+    const bool resizing = m_tileDrag.window == window && m_tileDrag.resizing;
+    m_tileDrag = {};
+
+    auto source = WorkAreaTiling(window);
+    if (resizing)
+    {
+        if (source)
+        {
+            source->EndTileDrag();
+        }
+
+        return;
+    }
+
+    // Dropped on a monitor with tiles, the window splits the tile it was dropped on
+    auto target = WorkAreaAt(cursor);
+    if (target && target->IsAutomaticTiling())
+    {
+        if (source && source != target)
+        {
+            source->Untile(window);
+        }
+
+        if (target->DropTile(window, cursor))
+        {
+            return;
+        }
+    }
+
+    // Dropped where there are no tiles, a tiled window stops being tiled and stays where it was dropped
+    if (source && source != target)
+    {
+        source->Untile(window);
+    }
+    else if (source)
+    {
+        source->ReflowTiles();
     }
 }
 
@@ -1088,18 +1181,19 @@ LRESULT FancyZones::WndProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         else if (message == WM_PRIV_MOVESIZESTART)
         {
             auto hwnd = reinterpret_cast<HWND>(wparam);
-            if (auto monitor = MonitorFromPoint(ptScreen, MONITOR_DEFAULTTONULL))
+            if (!BeginTileDrag(hwnd))
             {
-                MoveSizeStart(hwnd, monitor);
-                MoveSizeUpdate(monitor, ptScreen);
+                if (auto monitor = MonitorFromPoint(ptScreen, MONITOR_DEFAULTTONULL))
+                {
+                    MoveSizeStart(hwnd, monitor);
+                    MoveSizeUpdate(monitor, ptScreen);
+                }
             }
-
-            BeginTileDrag(hwnd);
         }
         else if (message == WM_PRIV_MOVESIZEEND)
         {
             MoveSizeEnd();
-            EndTileDrag(reinterpret_cast<HWND>(wparam));
+            EndTileDrag(reinterpret_cast<HWND>(wparam), ptScreen);
         }
         else if (message == WM_PRIV_LOCATIONCHANGE)
         {
@@ -1108,7 +1202,7 @@ LRESULT FancyZones::WndProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 MoveSizeUpdate(monitor, ptScreen);
             }
 
-            UpdateTileDrag(reinterpret_cast<HWND>(wparam));
+            UpdateTileDrag(reinterpret_cast<HWND>(wparam), ptScreen);
         }
         else if (message == WM_PRIV_WINDOWCREATED)
         {
@@ -1125,6 +1219,16 @@ LRESULT FancyZones::WndProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
             {
                 Logger::info(L"Window destroyed during drag - aborting drag");
                 AbortMoveSize();
+            }
+
+            if (m_tileDrag.window == hwnd)
+            {
+                if (auto previous = m_workAreaConfiguration.GetWorkArea(m_tileDrag.dropMonitor))
+                {
+                    previous->HideTileDrop();
+                }
+
+                m_tileDrag = {};
             }
 
             UntileWindow(hwnd);

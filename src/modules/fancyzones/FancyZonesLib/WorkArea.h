@@ -75,10 +75,23 @@ public:
     void UpdateTileResize(HWND window);
     void EndTileDrag();
 
+    // Dropping a dragged window on a tile splits that tile, with the window on the side it was dropped on.
+    // The cursor is in screen coordinates.
+    void ShowTileDrop(HWND window, POINT cursor);
+    void HideTileDrop();
+    bool DropTile(HWND window, POINT cursor);
+
 protected:
     static LRESULT CALLBACK s_WndProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) noexcept;
 
 private:
+    struct TileDrop
+    {
+        HWND target; // tile to split, null when there are no tiles yet
+        TilingTree::Side side;
+        RECT rect; // where the dropped window goes, in work area coordinates
+    };
+
     bool InitWindow(HINSTANCE hinstance);
     void InitLayout(const FancyZonesDataTypes::WorkAreaId& parentUniqueId);
     
@@ -92,6 +105,7 @@ private:
     bool IsInTile(HWND window, const RECT& tile) const noexcept;
     void ApplyTileResize();
     void ReflowTilesLive(HWND resizingWindow);
+    std::optional<TileDrop> DropAt(HWND window, POINT cursor) const;
     void SetWorkAreaWindowAsTopmost(HWND draggedWindow) noexcept;
 
     LRESULT WndProc(UINT message, WPARAM wparam, LPARAM lparam) noexcept;
@@ -108,4 +122,5 @@ private:
     HWND m_resizingWindow{}; // tiled window whose border is being dragged
     bool m_liveResizePending{}; // the dragged border's latest position is waiting for the next frame
     std::unordered_map<HWND, std::pair<RECT, ULONGLONG>> m_liveResizeRequests; // last rect and tick count sent to each tile during a drag
+    std::optional<RECT> m_shownDrop; // drop preview currently in the overlay
 };

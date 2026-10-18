@@ -44,6 +44,13 @@ namespace TileSizeCheck
 
         return frame;
     }
+
+    // Windows that can't be resized stay where they are
+    bool CanTile(HWND window) noexcept
+    {
+        return FancyZonesWindowProcessing::IsProcessableAutomatically(window) &&
+               FancyZonesWindowUtils::HasStyle(GetWindowLong(window, GWL_STYLE), WS_THICKFRAME);
+    }
 }
 
 namespace LiveResize
@@ -324,9 +331,7 @@ bool WorkArea::IsTiled(HWND window) const
 
 bool WorkArea::Tile(HWND window, HWND target)
 {
-    // Windows that can't be resized stay where they are
-    if (!IsAutomaticTiling() || !FancyZonesWindowProcessing::IsProcessableAutomatically(window) ||
-        !FancyZonesWindowUtils::HasStyle(GetWindowLong(window, GWL_STYLE), WS_THICKFRAME))
+    if (!IsAutomaticTiling() || !TileSizeCheck::CanTile(window))
     {
         return false;
     }
@@ -361,7 +366,6 @@ bool WorkArea::Untile(HWND window)
         m_liveResizePending = false;
         m_resizingWindow = nullptr;
     }
-
     ReflowTiles();
     return true;
 }
@@ -520,6 +524,115 @@ RECT WorkArea::ToScreen(RECT tile) const noexcept
 {
     MapWindowRect(m_window, nullptr, &tile);
     return tile;
+}
+
+std::optional<WorkArea::TileDrop> WorkArea::DropAt(HWND window, POINT cursor) const
+{
+    if (!IsAutomaticTiling() || !m_window)
+    {
+        return std::nullopt;
+    }
+
+    ScreenToClient(m_window, &cursor);
+    const auto& tree = AutomaticTiling::Tree(m_uniqueId);
+    const auto rects = tree.CalculateRects(TileArea(), AutomaticTiling::TileSpacing);
+    if (rects.empty())
+    {
+        RECT whole = TileArea();
+        InflateRect(&whole, -AutomaticTiling::TileSpacing, -AutomaticTiling::TileSpacing);
+        return TileDrop{ nullptr, TilingTree::Side::Left, whole };
+    }
+
+    // Over its own tile the window just goes back where it was
+    for (const auto& [tileWindow, tile] : rects)
+    {
+        if (tileWindow == window && PtInRect(&tile, cursor))
+        {
+            return std::nullopt;
+        }
+    }
+
+    // Anywhere else the window first leaves its tile, so the other tiles are measured without it
+    for (const auto& [tileWindow, tile] : tree.CalculateRects(TileArea(), AutomaticTiling::TileSpacing, window))
+    {
+        if (PtInRect(&tile, cursor))
+        {
+            const auto side = TilingTree::SideAt(tile, cursor);
+            return TileDrop{ tileWindow, side, TilingTree::DropRect(tile, side, AutomaticTiling::TileSpacing) };
+        }
+    }
+
+    return std::nullopt;
+}
+
+void WorkArea::ShowTileDrop(HWND window, POINT cursor)
+{
+    const bool tileable = IsTiled(window) || TileSizeCheck::CanTile(window);
+    const auto drop = tileable ? DropAt(window, cursor) : std::nullopt;
+    if (!drop.has_value() || !m_zonesOverlay)
+    {
+        HideTileDrop();
+        return;
+    }
+
+    // Redraw only when the highlighted half changes, not on every mouse move
+    if (m_shownDrop.has_value() && EqualRect(&m_shownDrop.value(), &drop->rect))
+    {
+        return;
+    }
+
+    m_shownDrop = drop->rect;
+    ZonesMap preview;
+    preview.emplace(0, Zone(drop->rect, 0));
+    SetWorkAreaWindowAsTopmost(window);
+    m_zonesOverlay->DrawActiveZoneSet(preview, { 0 }, Colors::GetZoneColors(), false);
+    m_zonesOverlay->Show();
+}
+
+void WorkArea::HideTileDrop()
+{
+    if (m_shownDrop.has_value() && m_zonesOverlay)
+    {
+        m_zonesOverlay->Hide();
+    }
+
+    m_shownDrop.reset();
+}
+
+bool WorkArea::DropTile(HWND window, POINT cursor)
+{
+    HideTileDrop();
+    if (!IsAutomaticTiling())
+    {
+        return false;
+    }
+
+    auto& tree = AutomaticTiling::Tree(m_uniqueId);
+    const bool tiled = tree.Contains(window);
+    if (!tiled && !TileSizeCheck::CanTile(window))
+    {
+        return false;
+    }
+
+    // Dropped on another tile, the window splits it and takes the side it was dropped on
+    if (const auto drop = DropAt(window, cursor))
+    {
+        if (tiled)
+        {
+            tree.MoveBeside(window, drop->target, drop->side);
+        }
+        else
+        {
+            tree.InsertBeside(window, drop->target, drop->side);
+        }
+    }
+    else if (!tiled)
+    {
+        return false;
+    }
+
+    ReflowTiles();
+    return true;
 }
 
 TilingTree::WindowRects WorkArea::ApplyTileZones()
@@ -698,8 +811,7 @@ void WorkArea::SyncTiledWindows()
     for (HWND window : VirtualDesktop::instance().GetWindowsFromCurrentDesktop())
     {
         if (MonitorFromWindow(window, MONITOR_DEFAULTTONULL) == m_uniqueId.monitorId.monitor &&
-            FancyZonesWindowProcessing::IsProcessableAutomatically(window) &&
-            FancyZonesWindowUtils::HasStyle(GetWindowLong(window, GWL_STYLE), WS_THICKFRAME))
+            TileSizeCheck::CanTile(window))
         {
             tree.Insert(window, nullptr, TileArea(), AutomaticTiling::TileSpacing);
         }
