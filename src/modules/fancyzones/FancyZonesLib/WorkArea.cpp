@@ -46,6 +46,16 @@ namespace TileSizeCheck
     }
 }
 
+namespace LiveResize
+{
+    constexpr UINT_PTR TimerId = 2;
+
+    // About one display frame
+    constexpr UINT IntervalMillis = 16;
+
+    // A tile that hasn't finished its last resize by then gets the next one anyway
+    constexpr ULONGLONG BusyWindowTimeoutMillis = 100;
+}
 
 using namespace FancyZonesUtils;
 
@@ -144,6 +154,7 @@ WorkArea::~WorkArea()
     if (m_window)
     {
         KillTimer(m_window, TileSizeCheck::TimerId);
+        KillTimer(m_window, LiveResize::TimerId);
     }
 
     windowPool.FreeZonesOverlayWindow(m_window);
@@ -380,12 +391,23 @@ void WorkArea::BeginTileResize(HWND window)
 
 void WorkArea::UpdateTileResize(HWND window)
 {
-    if (window != m_resizingWindow || !IsAutomaticTiling())
+    if (window != m_resizingWindow || !IsAutomaticTiling() || m_liveResizePending)
     {
         return;
     }
 
-    const auto frame = TileSizeCheck::VisibleFrame(window);
+    // A dragged border can move many times per frame. Following each move floods the other tiles with
+    // resizes, and apps that repaint slowly then hold up the drag, so the latest position is applied once per frame.
+    m_liveResizePending = SetTimer(m_window, LiveResize::TimerId, LiveResize::IntervalMillis, nullptr) != 0;
+    if (!m_liveResizePending)
+    {
+        ApplyTileResize();
+    }
+}
+
+void WorkArea::ApplyTileResize()
+{
+    const auto frame = TileSizeCheck::VisibleFrame(m_resizingWindow);
     if (!frame.has_value())
     {
         return;
@@ -394,17 +416,31 @@ void WorkArea::UpdateTileResize(HWND window)
     // The dragged border moves the dividers along it, and the tiles on their other side follow
     RECT rect = frame.value();
     MapWindowRect(nullptr, m_window, &rect);
-    if (AutomaticTiling::Tree(m_uniqueId).ResizeTile(window, rect, TileArea(), AutomaticTiling::TileSpacing))
+    if (AutomaticTiling::Tree(m_uniqueId).ResizeTile(m_resizingWindow, rect, TileArea(), AutomaticTiling::TileSpacing))
     {
-        ReflowTilesLive(window);
+        ReflowTilesLive(m_resizingWindow);
     }
 }
 
 void WorkArea::EndTileDrag()
 {
+    if (m_liveResizePending)
+    {
+        KillTimer(m_window, LiveResize::TimerId);
+        m_liveResizePending = false;
+    }
+
+    // Catch up with where the border was released before placing every window normally
+    if (m_resizingWindow && IsAutomaticTiling())
+    {
+        ApplyTileResize();
+    }
+
     m_resizingWindow = nullptr;
+    m_liveResizeRequests.clear();
     ReflowTiles();
 }
+
 void WorkArea::CheckTiles()
 {
     // Tiles are only checked once a drag has ended
@@ -501,14 +537,32 @@ bool WorkArea::IsInTile(HWND window, const RECT& tile) const noexcept
 void WorkArea::ReflowTilesLive(HWND resizingWindow)
 {
     // Keeping up with the mouse, windows are moved directly instead of snapped, and aren't checked afterwards
+    const ULONGLONG now = GetTickCount64();
     for (const auto& [window, tile] : ApplyTileZones())
     {
-        if (window != resizingWindow && !IsInTile(window, tile))
+        if (window == resizingWindow || IsInTile(window, tile))
         {
-            ForceTileSize(window, tile);
+            continue;
         }
+
+        // A window still working through its last resize gets the next one once it's done,
+        // instead of a queue of them, unless it takes too long
+        if (const auto request = m_liveResizeRequests.find(window); request != m_liveResizeRequests.end())
+        {
+            const auto& [requestedRect, requestTime] = request->second;
+            const auto frame = TileSizeCheck::VisibleFrame(window);
+            const bool done = frame.has_value() && EqualRect(&frame.value(), &requestedRect);
+            if (!done && now - requestTime < LiveResize::BusyWindowTimeoutMillis)
+            {
+                continue;
+            }
+        }
+
+        ForceTileSize(window, tile);
+        m_liveResizeRequests[window] = { ToScreen(tile), now };
     }
 }
+
 #pragma region private
 
 bool WorkArea::InitWindow(HINSTANCE hinstance)
@@ -672,6 +726,17 @@ LRESULT WorkArea::WndProc(UINT message, WPARAM wparam, LPARAM lparam) noexcept
             return 0;
         }
 
+        if (wparam == LiveResize::TimerId)
+        {
+            KillTimer(m_window, LiveResize::TimerId);
+            m_liveResizePending = false;
+            if (m_resizingWindow && IsAutomaticTiling())
+            {
+                ApplyTileResize();
+            }
+
+            return 0;
+        }
 
         return DefWindowProc(m_window, message, wparam, lparam);
 
