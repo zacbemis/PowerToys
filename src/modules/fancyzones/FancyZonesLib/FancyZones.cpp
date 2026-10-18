@@ -9,6 +9,7 @@
 #include <common/SettingsAPI/FileWatcher.h>
 #include <common/notifications/NotificationUtil.h>
 
+#include <FancyZonesLib/AutomaticTiling.h>
 #include <FancyZonesLib/DraggingState.h>
 #include <FancyZonesLib/EditorParameters.h>
 #include <FancyZonesLib/FancyZonesData.h>
@@ -312,6 +313,20 @@ public:
                 PostMessageW(m_window, WM_PRIV_WINDOWDESTROYED, wparam, lparam);
             }
             break;
+
+        // Only subscribed to when automatic tiling is enabled
+        case EVENT_OBJECT_HIDE:
+            if (data->idObject == OBJID_WINDOW)
+            {
+                PostMessageW(m_window, WM_PRIV_WINDOWHIDDEN, wparam, lparam);
+            }
+            break;
+        case EVENT_SYSTEM_MINIMIZESTART:
+            PostMessageW(m_window, WM_PRIV_WINDOWHIDDEN, wparam, lparam);
+            break;
+        case EVENT_SYSTEM_MINIMIZEEND:
+            PostMessageW(m_window, WM_PRIV_WINDOWRESTORED, wparam, lparam);
+            break;
         }
     }
 
@@ -328,6 +343,9 @@ public:
     void AbortMoveSize();
 
     void WindowCreated(HWND window) noexcept;
+    bool TileWindow(HWND window) noexcept;
+    void UntileWindow(HWND window) noexcept;
+    void ReflowTiledWindow(HWND window) noexcept;
     void ToggleEditor() noexcept;
 
     LRESULT WndProc(HWND, UINT, WPARAM, LPARAM) noexcept;
@@ -611,6 +629,11 @@ bool FancyZones::MoveToAppLastZone(HWND window, HMONITOR monitor, GUID currentVi
 
 void FancyZones::WindowCreated(HWND window) noexcept
 {
+    if (TileWindow(window))
+    {
+        return;
+    }
+
     const bool moveToAppLastZone = FancyZonesSettings::settings().appLastZone_moveWindows;
     const bool openOnActiveMonitor = FancyZonesSettings::settings().openWindowOnActiveMonitor;
     if (!moveToAppLastZone && !openOnActiveMonitor)
@@ -678,6 +701,60 @@ void FancyZones::WindowCreated(HWND window) noexcept
         {
             FancyZonesWindowProperties::StampMovedOnOpeningProperty(window);
             m_dpiUnawareThread.submit(OnThreadExecutor::task_t{ [&] { MonitorUtils::OpenWindowOnActiveMonitor(window, active); } }).wait();
+        }
+    }
+}
+
+bool FancyZones::TileWindow(HWND window) noexcept
+{
+    if (!AutomaticTiling::IsEnabled())
+    {
+        return false;
+    }
+
+    // Show, create and uncloak events all arrive for the same window
+    for (const auto& [_, workArea] : m_workAreaConfiguration.GetAllWorkAreas())
+    {
+        if (workArea && workArea->IsTiled(window))
+        {
+            return true;
+        }
+    }
+
+    auto workArea = m_workAreaConfiguration.GetWorkAreaFromWindow(window);
+    return workArea && workArea->Tile(window, GetForegroundWindow());
+}
+
+void FancyZones::UntileWindow(HWND window) noexcept
+{
+    if (!AutomaticTiling::IsEnabled())
+    {
+        return;
+    }
+
+    for (const auto& [_, workArea] : m_workAreaConfiguration.GetAllWorkAreas())
+    {
+        if (workArea && workArea->Untile(window))
+        {
+            return;
+        }
+    }
+}
+
+void FancyZones::ReflowTiledWindow(HWND window) noexcept
+{
+    if (!AutomaticTiling::IsEnabled())
+    {
+        return;
+    }
+
+    // Dragging or resizing a tiled window puts it back into its tile
+    for (const auto& [_, workArea] : m_workAreaConfiguration.GetAllWorkAreas())
+    {
+        if (workArea && workArea->IsTiled(window))
+        {
+            workArea->ReflowTiles();
+            return;
         }
     }
 }
@@ -1002,6 +1079,7 @@ LRESULT FancyZones::WndProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         else if (message == WM_PRIV_MOVESIZEEND)
         {
             MoveSizeEnd();
+            ReflowTiledWindow(reinterpret_cast<HWND>(wparam));
         }
         else if (message == WM_PRIV_LOCATIONCHANGE)
         {
@@ -1026,6 +1104,16 @@ LRESULT FancyZones::WndProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                 Logger::info(L"Window destroyed during drag - aborting drag");
                 AbortMoveSize();
             }
+
+            UntileWindow(hwnd);
+        }
+        else if (message == WM_PRIV_WINDOWHIDDEN)
+        {
+            UntileWindow(reinterpret_cast<HWND>(wparam));
+        }
+        else if (message == WM_PRIV_WINDOWRESTORED)
+        {
+            TileWindow(reinterpret_cast<HWND>(wparam));
         }
         else if (message == WM_PRIV_LAYOUT_HOTKEYS_FILE_UPDATE)
         {

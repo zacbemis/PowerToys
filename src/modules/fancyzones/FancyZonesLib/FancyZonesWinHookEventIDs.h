@@ -6,6 +6,8 @@ extern UINT WM_PRIV_LOCATIONCHANGE;
 extern UINT WM_PRIV_NAMECHANGE;
 extern UINT WM_PRIV_WINDOWCREATED;
 extern UINT WM_PRIV_WINDOWDESTROYED;
+extern UINT WM_PRIV_WINDOWHIDDEN; // Scheduled when a window is minimized or hidden, used by automatic tiling only
+extern UINT WM_PRIV_WINDOWRESTORED; // Scheduled when a window is restored from minimized, used by automatic tiling only
 extern UINT WM_PRIV_INIT; // Scheduled when FancyZones is initialized
 extern UINT WM_PRIV_VD_SWITCH; // Scheduled when virtual desktop switch occurs
 extern UINT WM_PRIV_EDITOR; // Scheduled when the editor exits
