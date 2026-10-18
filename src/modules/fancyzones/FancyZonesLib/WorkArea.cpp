@@ -351,7 +351,17 @@ bool WorkArea::Untile(HWND window)
     m_misplacedWindows.erase(window);
     m_selfPlacingWindows.erase(window);
     m_forcedSizeWindows.erase(window);
+    m_liveResizeRequests.erase(window);
     FancyZonesWindowProperties::RemoveZoneIndexProperty(window);
+
+    // A window closed or moved away in the middle of a border drag ends that drag
+    if (m_resizingWindow == window)
+    {
+        KillTimer(m_window, LiveResize::TimerId);
+        m_liveResizePending = false;
+        m_resizingWindow = nullptr;
+    }
+
     ReflowTiles();
     return true;
 }
