@@ -77,6 +77,7 @@
     <ClInclude Include="FancyZonesWindowProperties.h" />
     <ClInclude Include="WindowUtils.h" />
     <ClInclude Include="Zone.h" />
+    <ClInclude Include="TilingTree.h" />
     <ClInclude Include="Colors.h" />
     <ClInclude Include="HighlightedZones.h" />
     <ClInclude Include="ZoneIndexSetBitmask.h" />
@@ -134,6 +135,7 @@
     <ClCompile Include="WindowMouseSnap.cpp" />
     <ClCompile Include="WindowUtils.cpp" />
     <ClCompile Include="Zone.cpp" />
+    <ClCompile Include="TilingTree.cpp" />
     <ClCompile Include="WorkArea.cpp" />
     <ClCompile Include="HighlightedZones.cpp" />
     <ClCompile Include="ZonesOverlay.cpp" />

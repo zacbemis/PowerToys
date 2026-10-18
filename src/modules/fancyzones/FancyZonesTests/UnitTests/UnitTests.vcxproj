@@ -53,6 +53,7 @@
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(UsePrecompiledHeaders)' != 'false'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="TilingTree.Spec.cpp" />
     <ClCompile Include="Util.Spec.cpp" />
     <ClCompile Include="Util.cpp" />
     <ClCompile Include="WindowKeyboardSnap.Spec.cpp" />
