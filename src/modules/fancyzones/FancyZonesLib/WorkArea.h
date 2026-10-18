@@ -61,6 +61,13 @@ public:
     
     void CycleWindows(HWND window, bool reverse);
 
+    // Automatic tiling spike, see AutomaticTiling.h
+    bool IsAutomaticTiling() const noexcept;
+    bool IsTiled(HWND window) const;
+    bool Tile(HWND window, HWND target);
+    bool Untile(HWND window);
+    void ReflowTiles();
+
 protected:
     static LRESULT CALLBACK s_WndProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) noexcept;
 
@@ -69,6 +76,11 @@ private:
     void InitLayout(const FancyZonesDataTypes::WorkAreaId& parentUniqueId);
     
     void CalculateZoneSet();
+    void SyncTiledWindows();
+    void CheckTiles();
+    void ForceTileSize(HWND window, const RECT& tile);
+    RECT TileArea() const noexcept;
+    RECT ToScreen(RECT tile) const noexcept;
     void SetWorkAreaWindowAsTopmost(HWND draggedWindow) noexcept;
 
     LRESULT WndProc(UINT message, WPARAM wparam, LPARAM lparam) noexcept;
@@ -79,4 +91,7 @@ private:
     std::unique_ptr<Layout> m_layout;
     LayoutAssignedWindows m_layoutWindows{};
     std::unique_ptr<ZonesOverlay> m_zonesOverlay;
+    std::unordered_set<HWND> m_misplacedWindows; // tiled windows seen away from their tile once
+    std::unordered_set<HWND> m_selfPlacingWindows; // tiled windows that keep moving away from their tile
+    std::unordered_set<HWND> m_forcedSizeWindows; // tiled windows whose minimum size is bigger than their tile
 };

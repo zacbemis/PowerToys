@@ -17,6 +17,12 @@ public:
     FancyZonesDataTypes::ZoneSetLayoutType Type() const noexcept;
 
     const ZonesMap& Zones() const noexcept;
+
+    /**
+     * Replace the zones calculated from layout data. Used by automatic tiling,
+     * where zones follow the tiled windows.
+     */
+    void SetZones(ZonesMap zones) noexcept;
     ZoneIndexSet ZonesFromPoint(POINT pt) const noexcept;
     /**
      * Returns all zones spanned by the minimum bounding rectangle containing the two given zone index sets.

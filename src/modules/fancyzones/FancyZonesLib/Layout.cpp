@@ -183,6 +183,11 @@ const ZonesMap& Layout::Zones() const noexcept
     return m_zones;
 }
 
+void Layout::SetZones(ZonesMap zones) noexcept
+{
+    m_zones = std::move(zones);
+}
+
 ZoneIndexSet Layout::ZonesFromPoint(POINT pt) const noexcept
 {
     ZoneIndexSet capturedZones;

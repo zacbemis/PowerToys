@@ -8,6 +8,8 @@
 #include "FancyZonesData/CustomLayouts.h"
 #include "ZonesOverlay.h"
 #include "Settings.h"
+#include <FancyZonesLib/AutomaticTiling.h>
+#include <FancyZonesLib/FancyZonesWindowProcessing.h>
 #include <FancyZonesLib/FancyZonesWindowProperties.h>
 #include <FancyZonesLib/VirtualDesktop.h>
 #include <FancyZonesLib/WindowUtils.h>
@@ -25,6 +27,23 @@ namespace NonLocalizable
 {
     const wchar_t ToolWindowClassName[] = L"FancyZones_ZonesOverlay";
     const wchar_t ToolWindowName[] = L"FancyZones_ZonesOverlay";
+}
+
+namespace TileSizeCheck
+{
+    constexpr UINT_PTR TimerId = 1;
+    constexpr UINT DelayMillis = 250;
+
+    std::optional<RECT> VisibleFrame(HWND window) noexcept
+    {
+        RECT frame{};
+        if (!IsWindow(window) || FAILED(DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &frame, sizeof(frame))))
+        {
+            return std::nullopt;
+        }
+
+        return frame;
+    }
 }
 
 using namespace FancyZonesUtils;
@@ -121,6 +140,11 @@ WorkArea::~WorkArea()
     // through m_renderTarget into an HWND that has already been recycled by a
     // subsequent NewZonesOverlayWindow call.
     m_zonesOverlay.reset();
+    if (m_window)
+    {
+        KillTimer(m_window, TileSizeCheck::TimerId);
+    }
+
     windowPool.FreeZonesOverlayWindow(m_window);
 }
 
@@ -140,7 +164,12 @@ bool WorkArea::Snap(HWND window, const ZoneIndexSet& zones, bool updatePosition)
     }
 
     m_layoutWindows.Assign(window, zones);
-    AppZoneHistory::instance().SetAppLastZones(window, m_uniqueId, m_layout->Id(), zones);
+
+    // Tile indices change on every reflow, so they are not worth remembering
+    if (!IsAutomaticTiling())
+    {
+        AppZoneHistory::instance().SetAppLastZones(window, m_uniqueId, m_layout->Id(), zones);
+    }
 
     if (updatePosition)
     {
@@ -270,6 +299,161 @@ void WorkArea::CycleWindows(HWND window, bool reverse)
     m_layoutWindows.CycleWindows(window, reverse);
 }
 
+bool WorkArea::IsAutomaticTiling() const noexcept
+{
+    // Spanning zones across monitors is not supported by the spike
+    return AutomaticTiling::IsEnabled() && m_layout && m_layout->Type() == FancyZonesDataTypes::ZoneSetLayoutType::Blank && m_uniqueId.monitorId.monitor;
+}
+
+bool WorkArea::IsTiled(HWND window) const
+{
+    return IsAutomaticTiling() && AutomaticTiling::Tree(m_uniqueId).Contains(window);
+}
+
+bool WorkArea::Tile(HWND window, HWND target)
+{
+    // Windows that can't be resized stay where they are
+    if (!IsAutomaticTiling() || !FancyZonesWindowProcessing::IsProcessableAutomatically(window) ||
+        !FancyZonesWindowUtils::HasStyle(GetWindowLong(window, GWL_STYLE), WS_THICKFRAME))
+    {
+        return false;
+    }
+
+    if (!AutomaticTiling::Tree(m_uniqueId).Insert(window, target, TileArea(), AutomaticTiling::TileSpacing))
+    {
+        return false;
+    }
+
+    ReflowTiles();
+    return true;
+}
+
+bool WorkArea::Untile(HWND window)
+{
+    if (!IsAutomaticTiling() || !AutomaticTiling::Tree(m_uniqueId).Remove(window))
+    {
+        return false;
+    }
+
+    m_layoutWindows.Dismiss(window);
+    m_misplacedWindows.erase(window);
+    m_selfPlacingWindows.erase(window);
+    m_forcedSizeWindows.erase(window);
+    FancyZonesWindowProperties::RemoveZoneIndexProperty(window);
+    ReflowTiles();
+    return true;
+}
+
+void WorkArea::ReflowTiles()
+{
+    if (!IsAutomaticTiling())
+    {
+        return;
+    }
+
+    const auto rects = AutomaticTiling::Tree(m_uniqueId).CalculateRects(TileArea(), AutomaticTiling::TileSpacing);
+
+    ZonesMap zones;
+    for (size_t i = 0; i < rects.size(); i++)
+    {
+        const auto index = static_cast<ZoneIndex>(i);
+        zones.emplace(index, Zone(rects[i].second, index));
+    }
+
+    m_layout->SetZones(std::move(zones));
+
+    for (size_t i = 0; i < rects.size(); i++)
+    {
+        // Placing a window again where it already is makes some apps drift, so only move windows that need it
+        const auto& [window, tile] = rects[i];
+        const auto frame = TileSizeCheck::VisibleFrame(window);
+        const RECT screenTile = ToScreen(tile);
+        const bool inTile = frame.has_value() && EqualRect(&frame.value(), &screenTile);
+        Snap(window, { static_cast<ZoneIndex>(i) }, !inTile);
+
+        if (!inTile && m_forcedSizeWindows.contains(window))
+        {
+            ForceTileSize(window, tile);
+        }
+    }
+
+    // Windows move asynchronously and may refuse to shrink, so check where they ended up a moment later
+    if (m_window && !rects.empty())
+    {
+        SetTimer(m_window, TileSizeCheck::TimerId, TileSizeCheck::DelayMillis, nullptr);
+    }
+}
+
+void WorkArea::CheckTiles()
+{
+    if (!IsAutomaticTiling())
+    {
+        return;
+    }
+
+    bool recheck = false;
+    const auto rects = AutomaticTiling::Tree(m_uniqueId).CalculateRects(TileArea(), AutomaticTiling::TileSpacing);
+    for (size_t i = 0; i < rects.size(); i++)
+    {
+        const auto& [window, tile] = rects[i];
+        const auto frame = TileSizeCheck::VisibleFrame(window);
+        if (!frame.has_value() || IsIconic(window) || IsZoomed(window))
+        {
+            continue;
+        }
+
+        // A window kept bigger than its tile by its minimum size is resized anyway, like in Hyprland.
+        // If it grows back by itself after that, it is left alone rather than fought over.
+        const RECT screenTile = ToScreen(tile);
+        const bool oversized = frame->right - frame->left > screenTile.right - screenTile.left ||
+                               frame->bottom - frame->top > screenTile.bottom - screenTile.top;
+        if (oversized && m_forcedSizeWindows.insert(window).second)
+        {
+            ForceTileSize(window, tile);
+            recheck = true;
+        }
+
+        const bool misplaced = frame->left != screenTile.left || frame->top != screenTile.top;
+        if (!misplaced || m_selfPlacingWindows.contains(window))
+        {
+            m_misplacedWindows.erase(window);
+            continue;
+        }
+
+        // The window may still be moving, so put it back once before deciding it places itself
+        if (m_misplacedWindows.insert(window).second)
+        {
+            Snap(window, { static_cast<ZoneIndex>(i) });
+            recheck = true;
+        }
+        else
+        {
+            m_misplacedWindows.erase(window);
+            m_selfPlacingWindows.insert(window);
+        }
+    }
+
+    if (recheck)
+    {
+        SetTimer(m_window, TileSizeCheck::TimerId, TileSizeCheck::DelayMillis, nullptr);
+    }
+}
+
+void WorkArea::ForceTileSize(HWND window, const RECT& tile)
+{
+    // Skipping WM_WINDOWPOSCHANGING skips the window's minimum size too.
+    // Asynchronous so that a hung window can't block FancyZones.
+    const RECT rect = FancyZonesWindowUtils::AdjustRectForSizeWindowToRect(window, tile, m_window);
+    constexpr UINT flags = SWP_NOSENDCHANGING | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS;
+    SetWindowPos(window, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, flags);
+}
+
+RECT WorkArea::ToScreen(RECT tile) const noexcept
+{
+    MapWindowRect(m_window, nullptr, &tile);
+    return tile;
+}
+
 #pragma region private
 
 bool WorkArea::InitWindow(HINSTANCE hinstance)
@@ -369,6 +553,46 @@ void WorkArea::CalculateZoneSet()
 
     m_layout = std::make_unique<Layout>(appliedLayout.value());
     m_layout->Init(m_workAreaRect, m_uniqueId.monitorId.monitor);
+
+    if (IsAutomaticTiling())
+    {
+        SyncTiledWindows();
+    }
+    else if (AutomaticTiling::IsEnabled())
+    {
+        AutomaticTiling::EraseTree(m_uniqueId);
+    }
+}
+
+void WorkArea::SyncTiledWindows()
+{
+    // Drop windows that went away while this work area wasn't active, then tile the ones already open
+    auto& tree = AutomaticTiling::Tree(m_uniqueId);
+    for (HWND window : tree.Windows())
+    {
+        if (!IsWindow(window) || IsIconic(window) || !IsWindowVisible(window))
+        {
+            tree.Remove(window);
+        }
+    }
+
+    for (HWND window : VirtualDesktop::instance().GetWindowsFromCurrentDesktop())
+    {
+        if (MonitorFromWindow(window, MONITOR_DEFAULTTONULL) == m_uniqueId.monitorId.monitor &&
+            FancyZonesWindowProcessing::IsProcessableAutomatically(window) &&
+            FancyZonesWindowUtils::HasStyle(GetWindowLong(window, GWL_STYLE), WS_THICKFRAME))
+        {
+            tree.Insert(window, nullptr, TileArea(), AutomaticTiling::TileSpacing);
+        }
+    }
+
+    ReflowTiles();
+}
+
+RECT WorkArea::TileArea() const noexcept
+{
+    // Zones are relative to the work area window
+    return RECT{ 0, 0, m_workAreaRect.width(), m_workAreaRect.height() };
 }
 
 LRESULT WorkArea::WndProc(UINT message, WPARAM wparam, LPARAM lparam) noexcept
@@ -384,6 +608,16 @@ LRESULT WorkArea::WndProc(UINT message, WPARAM wparam, LPARAM lparam) noexcept
 
     case WM_ERASEBKGND:
         return 1;
+
+    case WM_TIMER:
+        if (wparam == TileSizeCheck::TimerId)
+        {
+            KillTimer(m_window, TileSizeCheck::TimerId);
+            CheckTiles();
+            return 0;
+        }
+
+        return DefWindowProc(m_window, message, wparam, lparam);
 
     default:
     {

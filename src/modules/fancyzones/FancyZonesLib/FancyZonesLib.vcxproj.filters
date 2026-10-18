@@ -30,6 +30,9 @@
     <ClInclude Include="Zone.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="AutomaticTiling.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="TilingTree.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -180,6 +183,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Zone.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="AutomaticTiling.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="TilingTree.cpp">
