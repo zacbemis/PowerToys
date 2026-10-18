@@ -21,6 +21,9 @@ public:
 
     using WindowRects = std::vector<std::pair<HWND, RECT>>;
 
+    // A resized tile's border stops this far from the far edges of its split
+    static constexpr LONG MinimumTileExtent = 50;
+
     TilingTree() = default;
     ~TilingTree() = default;
 
@@ -60,6 +63,15 @@ public:
      */
     WindowRects CalculateRects(const RECT& area, int spacing) const;
 
+    /**
+     * Move the dividers along the edges where newRect differs from window's tile, as when the
+     * window's border is dragged. Edges along the outside of area have no divider and are ignored.
+     * Dividers are clamped so both sides of a split keep MinimumTileExtent.
+     *
+     * @returns true if any divider moved.
+     */
+    bool ResizeTile(HWND window, const RECT& newRect, const RECT& area, int spacing);
+
 private:
     struct Node
     {
@@ -74,6 +86,8 @@ private:
     };
 
     Node* FindLeaf(HWND window) const noexcept;
+    std::vector<std::pair<Node*, RECT>> Splits(const RECT& area, int spacing) const;
+    static bool SetDividerPosition(Node* split, const RECT& rect, LONG position, int spacing) noexcept;
     static void Collect(const Node* node, const RECT& rect, int spacing, WindowRects& result);
 
     std::unique_ptr<Node> m_root;

@@ -1,28 +1,45 @@
 #include "pch.h"
 #include "TilingTree.h"
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 
 namespace
 {
+    RECT Inset(const RECT& rect, int amount) noexcept
+    {
+        return RECT{ rect.left + amount, rect.top + amount, rect.right - amount, rect.bottom - amount };
+    }
+
+    // Start and end of a split's rect along the axis its divider moves on
+    std::pair<LONG, LONG> SplitAxis(const RECT& rect, TilingTree::Orientation orientation) noexcept
+    {
+        return orientation == TilingTree::Orientation::SideBySide ? std::pair{ rect.left, rect.right } : std::pair{ rect.top, rect.bottom };
+    }
+
+    LONG DividerPosition(const RECT& rect, TilingTree::Orientation orientation, double ratio) noexcept
+    {
+        const auto [start, end] = SplitAxis(rect, orientation);
+        return start + static_cast<LONG>(std::lround((static_cast<double>(end) - start) * ratio));
+    }
+
     std::pair<RECT, RECT> SplitRect(const RECT& rect, TilingTree::Orientation orientation, double ratio, int spacing)
     {
         // Each side of the divider gives up half of the spacing, so the gap between tiles equals spacing
         const int firstGap = spacing / 2;
         const int secondGap = spacing - firstGap;
+        const LONG divider = DividerPosition(rect, orientation, ratio);
 
         RECT first = rect;
         RECT second = rect;
         if (orientation == TilingTree::Orientation::SideBySide)
         {
-            const LONG divider = rect.left + static_cast<LONG>(std::lround((static_cast<double>(rect.right) - rect.left) * ratio));
             first.right = divider - firstGap;
             second.left = divider + secondGap;
         }
         else
         {
-            const LONG divider = rect.top + static_cast<LONG>(std::lround((static_cast<double>(rect.bottom) - rect.top) * ratio));
             first.bottom = divider - firstGap;
             second.top = divider + secondGap;
         }
@@ -152,11 +169,118 @@ TilingTree::WindowRects TilingTree::CalculateRects(const RECT& area, int spacing
     WindowRects result;
     if (m_root)
     {
-        const RECT inner{ area.left + spacing, area.top + spacing, area.right - spacing, area.bottom - spacing };
-        Collect(m_root.get(), inner, spacing, result);
+        Collect(m_root.get(), Inset(area, spacing), spacing, result);
     }
 
     return result;
+}
+
+bool TilingTree::ResizeTile(HWND window, const RECT& newRect, const RECT& area, int spacing)
+{
+    Node* leaf = FindLeaf(window);
+    if (!leaf)
+    {
+        return false;
+    }
+
+    RECT tile{};
+    for (const auto& [tileWindow, rect] : CalculateRects(area, spacing))
+    {
+        if (tileWindow == window)
+        {
+            tile = rect;
+        }
+    }
+
+    // The divider along an edge belongs to the nearest split that has the tile on that side of it
+    const auto moveEdge = [&](Orientation orientation, bool tileIsFirst, LONG position) {
+        for (Node *child = leaf, *parent = leaf->parent; parent; child = parent, parent = parent->parent)
+        {
+            if (parent->orientation == orientation && (parent->first.get() == child) == tileIsFirst)
+            {
+                // Earlier edges may have moved this split, so find its current rect
+                for (const auto& [split, rect] : Splits(area, spacing))
+                {
+                    if (split == parent)
+                    {
+                        return SetDividerPosition(parent, rect, position, spacing);
+                    }
+                }
+            }
+        }
+
+        return false;
+    };
+
+    const int firstGap = spacing / 2;
+    const int secondGap = spacing - firstGap;
+    bool moved = false;
+    if (newRect.left != tile.left)
+    {
+        moved |= moveEdge(Orientation::SideBySide, false, newRect.left - secondGap);
+    }
+
+    if (newRect.right != tile.right)
+    {
+        moved |= moveEdge(Orientation::SideBySide, true, newRect.right + firstGap);
+    }
+
+    if (newRect.top != tile.top)
+    {
+        moved |= moveEdge(Orientation::Stacked, false, newRect.top - secondGap);
+    }
+
+    if (newRect.bottom != tile.bottom)
+    {
+        moved |= moveEdge(Orientation::Stacked, true, newRect.bottom + firstGap);
+    }
+
+    return moved;
+}
+
+std::vector<std::pair<TilingTree::Node*, RECT>> TilingTree::Splits(const RECT& area, int spacing) const
+{
+    std::vector<std::pair<Node*, RECT>> result;
+    std::function<void(Node*, const RECT&)> visit = [&](Node* node, const RECT& rect) {
+        if (node->IsLeaf())
+        {
+            return;
+        }
+
+        result.emplace_back(node, rect);
+        const auto [first, second] = SplitRect(rect, node->orientation, node->ratio, spacing);
+        visit(node->first.get(), first);
+        visit(node->second.get(), second);
+    };
+
+    if (m_root)
+    {
+        visit(m_root.get(), Inset(area, spacing));
+    }
+
+    return result;
+}
+
+bool TilingTree::SetDividerPosition(Node* split, const RECT& rect, LONG position, int spacing) noexcept
+{
+    const int firstGap = spacing / 2;
+    const int secondGap = spacing - firstGap;
+    const auto [start, end] = SplitAxis(rect, split->orientation);
+    const LONG lowest = start + MinimumTileExtent + firstGap;
+    const LONG highest = end - MinimumTileExtent - secondGap;
+    if (lowest > highest)
+    {
+        return false;
+    }
+
+    const LONG clamped = std::clamp(position, lowest, highest);
+    if (clamped == DividerPosition(rect, split->orientation, split->ratio))
+    {
+        return false;
+    }
+
+    split->ratio = (static_cast<double>(clamped) - start) / (static_cast<double>(end) - start);
+    return true;
 }
 
 TilingTree::Node* TilingTree::FindLeaf(HWND window) const noexcept
