@@ -273,6 +273,28 @@ void FancyZonesWindowUtils::SizeWindowToRect(HWND window, RECT rect, BOOL snapZo
     }
 }
 
+void FancyZonesWindowUtils::SetWindowRestoreRect(HWND window, RECT rect) noexcept
+{
+    WINDOWPLACEMENT placement{ sizeof(WINDOWPLACEMENT) };
+    if (!::GetWindowPlacement(window, &placement))
+    {
+        return;
+    }
+
+    ScreenToWorkAreaCoords(window, rect);
+    if (EqualRect(&placement.rcNormalPosition, &rect))
+    {
+        return;
+    }
+
+    placement.rcNormalPosition = rect;
+    placement.flags |= WPF_ASYNCWINDOWPLACEMENT;
+    if (!::SetWindowPlacement(window, &placement))
+    {
+        Logger::error(L"SetWindowPlacement failed, {}", get_last_error_or_default(GetLastError()));
+    }
+}
+
 void FancyZonesWindowUtils::SaveWindowSizeAndOrigin(HWND window) noexcept
 {
     HANDLE handle = GetPropW(window, ZonedWindowProperties::PropertyRestoreSizeID);

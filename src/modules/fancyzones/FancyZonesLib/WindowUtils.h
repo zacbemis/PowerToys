@@ -32,6 +32,7 @@ namespace FancyZonesWindowUtils
 
     void SwitchToWindow(HWND window) noexcept;
     void SizeWindowToRect(HWND window, RECT rect, BOOL snapZone = true) noexcept; // Parameter rect must be in screen coordinates (e.g. obtained from GetWindowRect)
+    void SetWindowRestoreRect(HWND window, RECT rect) noexcept; // Where a maximized window goes when restored, without restoring it. Parameter rect must be in screen coordinates
     void SaveWindowSizeAndOrigin(HWND window) noexcept;
     void RestoreWindowSize(HWND window) noexcept;
     void RestoreWindowOrigin(HWND window) noexcept;

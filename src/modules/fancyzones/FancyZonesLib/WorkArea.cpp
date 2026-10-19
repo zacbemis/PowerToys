@@ -356,6 +356,7 @@ bool WorkArea::Untile(HWND window)
     m_misplacedWindows.erase(window);
     m_selfPlacingWindows.erase(window);
     m_forcedSizeWindows.erase(window);
+    m_tileBorders.erase(window);
     m_liveResizeRequests.erase(window);
     FancyZonesWindowProperties::RemoveZoneIndexProperty(window);
 
@@ -382,6 +383,16 @@ void WorkArea::ReflowTiles()
     {
         // Placing a window again where it already is makes some apps drift, so only move windows that need it
         const auto& [window, tile] = rects[i];
+
+        // A maximized window keeps its tile but stays maximized, and goes to the tile when it's restored
+        if (IsZoomed(window))
+        {
+            Snap(window, { static_cast<ZoneIndex>(i) }, false);
+            FancyZonesWindowUtils::SetWindowRestoreRect(window, RestoreRect(window, tile));
+            continue;
+        }
+
+        MeasureTileBorders(window);
         const bool inTile = IsInTile(window, tile);
         Snap(window, { static_cast<ZoneIndex>(i) }, !inTile);
 
@@ -663,7 +674,7 @@ void WorkArea::ReflowTilesLive(HWND resizingWindow)
     const ULONGLONG now = GetTickCount64();
     for (const auto& [window, tile] : ApplyTileZones())
     {
-        if (window == resizingWindow || IsInTile(window, tile))
+        if (window == resizingWindow || IsZoomed(window) || IsInTile(window, tile))
         {
             continue;
         }
@@ -684,6 +695,33 @@ void WorkArea::ReflowTilesLive(HWND resizingWindow)
         ForceTileSize(window, tile);
         m_liveResizeRequests[window] = { ToScreen(tile), now };
     }
+}
+
+void WorkArea::MeasureTileBorders(HWND window)
+{
+    const auto frame = TileSizeCheck::VisibleFrame(window);
+    RECT windowRect{};
+    if (frame.has_value() && GetWindowRect(window, &windowRect))
+    {
+        m_tileBorders[window] = { frame->left - windowRect.left, frame->top - windowRect.top, windowRect.right - frame->right, windowRect.bottom - frame->bottom };
+    }
+}
+
+RECT WorkArea::RestoreRect(HWND window, const RECT& tile) const noexcept
+{
+    // A maximized window's invisible borders are wider than when it's restored
+    const auto borders = m_tileBorders.find(window);
+    if (borders == m_tileBorders.end())
+    {
+        return FancyZonesWindowUtils::AdjustRectForSizeWindowToRect(window, tile, m_window);
+    }
+
+    RECT rect = ToScreen(tile);
+    rect.left -= borders->second.left;
+    rect.top -= borders->second.top;
+    rect.right += borders->second.right;
+    rect.bottom += borders->second.bottom;
+    return rect;
 }
 
 #pragma region private

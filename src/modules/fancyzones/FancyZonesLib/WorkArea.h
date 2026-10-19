@@ -105,6 +105,8 @@ private:
     bool IsInTile(HWND window, const RECT& tile) const noexcept;
     void ApplyTileResize();
     void ReflowTilesLive(HWND resizingWindow);
+    void MeasureTileBorders(HWND window);
+    RECT RestoreRect(HWND window, const RECT& tile) const noexcept;
     std::optional<TileDrop> DropAt(HWND window, POINT cursor) const;
     void SetWorkAreaWindowAsTopmost(HWND draggedWindow) noexcept;
 
@@ -119,6 +121,7 @@ private:
     std::unordered_set<HWND> m_misplacedWindows; // tiled windows seen away from their tile once
     std::unordered_set<HWND> m_selfPlacingWindows; // tiled windows that keep moving away from their tile
     std::unordered_set<HWND> m_forcedSizeWindows; // tiled windows whose minimum size is bigger than their tile
+    std::unordered_map<HWND, RECT> m_tileBorders; // invisible borders of tiled windows, last measured while they weren't maximized
     HWND m_resizingWindow{}; // tiled window whose border is being dragged
     bool m_liveResizePending{}; // the dragged border's latest position is waiting for the next frame
     std::unordered_map<HWND, std::pair<RECT, ULONGLONG>> m_liveResizeRequests; // last rect and tick count sent to each tile during a drag
