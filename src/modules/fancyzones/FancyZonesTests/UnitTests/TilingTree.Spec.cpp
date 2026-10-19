@@ -421,6 +421,125 @@ namespace FancyZonesUnitTests
             CustomAssert::AreEqual(RECT{ 0, 0, 960, 1080 }, RectOf(tree.CalculateRects(m_landscape, 0), m_first));
         }
 
+        TEST_METHOD (SwapTowardTradesPlacesWithEverythingAcross)
+        {
+            TilingTree tree;
+            tree.Insert(m_first, nullptr, m_landscape, 0);
+            tree.Insert(m_second, m_first, m_landscape, 0);
+            tree.Insert(m_third, m_second, m_landscape, 0);
+
+            // m_first on the left, m_second and m_third stacked on the right: both move left together
+            Assert::IsTrue(tree.SwapToward(m_first, TilingTree::Side::Right));
+
+            auto rects = tree.CalculateRects(m_landscape, 0);
+            CustomAssert::AreEqual(RECT{ 0, 0, 960, 540 }, RectOf(rects, m_second));
+            CustomAssert::AreEqual(RECT{ 0, 540, 960, 1080 }, RectOf(rects, m_third));
+            CustomAssert::AreEqual(RECT{ 960, 0, 1920, 1080 }, RectOf(rects, m_first));
+
+            Assert::IsTrue(tree.SwapToward(m_first, TilingTree::Side::Left));
+
+            rects = tree.CalculateRects(m_landscape, 0);
+            CustomAssert::AreEqual(RECT{ 0, 0, 960, 1080 }, RectOf(rects, m_first));
+            CustomAssert::AreEqual(RECT{ 960, 0, 1920, 540 }, RectOf(rects, m_second));
+            CustomAssert::AreEqual(RECT{ 960, 540, 1920, 1080 }, RectOf(rects, m_third));
+        }
+
+        TEST_METHOD (SwapTowardFromInsideSplitTakesOnlyWindowsTile)
+        {
+            TilingTree tree;
+            tree.Insert(m_first, nullptr, m_landscape, 0);
+            tree.Insert(m_second, m_first, m_landscape, 0);
+            tree.Insert(m_third, m_second, m_landscape, 0);
+
+            Assert::IsTrue(tree.SwapToward(m_third, TilingTree::Side::Top));
+
+            auto rects = tree.CalculateRects(m_landscape, 0);
+            CustomAssert::AreEqual(RECT{ 960, 0, 1920, 540 }, RectOf(rects, m_third));
+            CustomAssert::AreEqual(RECT{ 960, 540, 1920, 1080 }, RectOf(rects, m_second));
+
+            // Across the left divider is m_first alone, which takes m_third's quarter
+            Assert::IsTrue(tree.SwapToward(m_third, TilingTree::Side::Left));
+
+            rects = tree.CalculateRects(m_landscape, 0);
+            CustomAssert::AreEqual(RECT{ 0, 0, 960, 1080 }, RectOf(rects, m_third));
+            CustomAssert::AreEqual(RECT{ 960, 0, 1920, 540 }, RectOf(rects, m_first));
+            CustomAssert::AreEqual(RECT{ 960, 540, 1920, 1080 }, RectOf(rects, m_second));
+        }
+
+        TEST_METHOD (SwapTowardKeepsTileSizes)
+        {
+            TilingTree tree;
+            tree.Insert(m_first, nullptr, m_landscape, 0);
+            tree.Insert(m_second, m_first, m_landscape, 0);
+            tree.ResizeTile(m_first, RECT{ 0, 0, 600, 1080 }, m_landscape, 0);
+
+            Assert::IsTrue(tree.SwapToward(m_first, TilingTree::Side::Right));
+
+            const auto rects = tree.CalculateRects(m_landscape, 0);
+            CustomAssert::AreEqual(RECT{ 0, 0, 600, 1080 }, RectOf(rects, m_second));
+            CustomAssert::AreEqual(RECT{ 600, 0, 1920, 1080 }, RectOf(rects, m_first));
+        }
+
+        TEST_METHOD (SwapTowardEdgeOrUnknownWindowFails)
+        {
+            TilingTree tree;
+            tree.Insert(m_first, nullptr, m_landscape, 0);
+            Assert::IsFalse(tree.SwapToward(m_first, TilingTree::Side::Right));
+
+            tree.Insert(m_second, m_first, m_landscape, 0);
+            tree.Insert(m_third, m_second, m_landscape, 0);
+            Assert::IsFalse(tree.SwapToward(m_first, TilingTree::Side::Left));
+            Assert::IsFalse(tree.SwapToward(m_first, TilingTree::Side::Top));
+            Assert::IsFalse(tree.SwapToward(m_second, TilingTree::Side::Right));
+            Assert::IsFalse(tree.SwapToward(m_third, TilingTree::Side::Bottom));
+            Assert::IsFalse(tree.SwapToward(m_fourth, TilingTree::Side::Left));
+
+            CustomAssert::AreEqual(RECT{ 0, 0, 960, 1080 }, RectOf(tree.CalculateRects(m_landscape, 0), m_first));
+        }
+
+        TEST_METHOD (ReplaceWindowTakesOverTile)
+        {
+            TilingTree tree;
+            tree.Insert(m_first, nullptr, m_landscape, 0);
+            tree.Insert(m_second, m_first, m_landscape, 0);
+
+            Assert::IsTrue(tree.ReplaceWindow(m_second, m_fourth));
+
+            Assert::IsFalse(tree.Contains(m_second));
+            Assert::AreEqual(size_t{ 2 }, tree.Size());
+            Assert::IsTrue(m_fourth == tree.NewestWindow());
+            CustomAssert::AreEqual(RECT{ 960, 0, 1920, 1080 }, RectOf(tree.CalculateRects(m_landscape, 0), m_fourth));
+        }
+
+        TEST_METHOD (ReplaceWindowWithTiledOrUnknownWindowFails)
+        {
+            TilingTree tree;
+            tree.Insert(m_first, nullptr, m_landscape, 0);
+            tree.Insert(m_second, m_first, m_landscape, 0);
+
+            Assert::IsFalse(tree.ReplaceWindow(m_first, m_second));
+            Assert::IsFalse(tree.ReplaceWindow(m_first, nullptr));
+            Assert::IsFalse(tree.ReplaceWindow(m_third, m_fourth));
+            Assert::IsTrue(tree.Contains(m_first));
+        }
+
+        TEST_METHOD (TileAtEdgePicksNearestTileAlongThatEdge)
+        {
+            TilingTree tree;
+            tree.Insert(m_first, nullptr, m_landscape, 0);
+            tree.Insert(m_second, m_first, m_landscape, 0);
+            tree.Insert(m_third, m_second, m_landscape, 0);
+            const auto rects = tree.CalculateRects(m_landscape, 0);
+
+            Assert::IsTrue(m_second == TilingTree::TileAtEdge(rects, TilingTree::Side::Right, POINT{ -500, 100 }));
+            Assert::IsTrue(m_third == TilingTree::TileAtEdge(rects, TilingTree::Side::Right, POINT{ -500, 800 }));
+            Assert::IsTrue(m_third == TilingTree::TileAtEdge(rects, TilingTree::Side::Right, POINT{ -500, 5000 }));
+            Assert::IsTrue(m_first == TilingTree::TileAtEdge(rects, TilingTree::Side::Left, POINT{ 3000, 800 }));
+            Assert::IsTrue(m_second == TilingTree::TileAtEdge(rects, TilingTree::Side::Top, POINT{ 1500, 2000 }));
+            Assert::IsTrue(m_first == TilingTree::TileAtEdge(rects, TilingTree::Side::Bottom, POINT{ 100, -900 }));
+            Assert::IsNull(TilingTree::TileAtEdge({}, TilingTree::Side::Left, POINT{}));
+        }
+
         TEST_METHOD (CalculateRectsWithoutWindowMatchesRemovingIt)
         {
             TilingTree tree;

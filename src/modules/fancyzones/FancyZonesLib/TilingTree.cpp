@@ -121,6 +121,49 @@ bool TilingTree::MoveBeside(HWND window, HWND target, Side side)
     return InsertBeside(window, target, side);
 }
 
+bool TilingTree::SwapToward(HWND window, Side side)
+{
+    Node* leaf = FindLeaf(window);
+    if (!leaf)
+    {
+        return false;
+    }
+
+    const Orientation orientation = side == Side::Left || side == Side::Right ? Orientation::SideBySide : Orientation::Stacked;
+    const bool towardSecond = side == Side::Right || side == Side::Bottom;
+    for (Node *child = leaf, *parent = leaf->parent; parent; child = parent, parent = parent->parent)
+    {
+        if (parent->orientation != orientation || (parent->first.get() == child) != towardSecond)
+        {
+            continue;
+        }
+
+        // The window and what is across the divider trade slots, so each takes the other's place
+        Node* leafParent = leaf->parent;
+        std::unique_ptr<Node>& own = SlotOf(leaf);
+        std::unique_ptr<Node>& across = towardSecond ? parent->second : parent->first;
+        std::swap(own, across);
+        own->parent = leafParent;
+        across->parent = parent;
+        return true;
+    }
+
+    return false;
+}
+
+bool TilingTree::ReplaceWindow(HWND window, HWND replacement)
+{
+    Node* leaf = FindLeaf(window);
+    if (!leaf || !replacement || Contains(replacement))
+    {
+        return false;
+    }
+
+    leaf->window = replacement;
+    std::replace(m_insertionOrder.begin(), m_insertionOrder.end(), window, replacement);
+    return true;
+}
+
 bool TilingTree::Remove(HWND window)
 {
     Node* leaf = FindLeaf(window);
@@ -291,6 +334,50 @@ RECT TilingTree::DropRect(const RECT& tile, Side side, int spacing) noexcept
     return side == Side::Left || side == Side::Top ? first : second;
 }
 
+HWND TilingTree::TileAtEdge(const WindowRects& tiles, Side edge, POINT point) noexcept
+{
+    // Tiles along an edge reach furthest that way
+    const auto reach = [edge](const RECT& tile) noexcept {
+        switch (edge)
+        {
+        case Side::Left:
+            return -tile.left;
+        case Side::Top:
+            return -tile.top;
+        case Side::Right:
+            return tile.right;
+        default:
+            return tile.bottom;
+        }
+    };
+
+    // Distance from point to the tile's extent along the edge, zero if point is level with it
+    const auto distance = [edge, point](const RECT& tile) noexcept {
+        const bool sideBySide = edge == Side::Left || edge == Side::Right;
+        const LONG position = sideBySide ? point.y : point.x;
+        const LONG start = sideBySide ? tile.top : tile.left;
+        const LONG end = sideBySide ? tile.bottom : tile.right;
+        return position < start ? start - position : position >= end ? position - end + 1 : 0;
+    };
+
+    HWND nearest = nullptr;
+    LONG nearestReach = 0;
+    LONG nearestDistance = 0;
+    for (const auto& [window, tile] : tiles)
+    {
+        const LONG tileReach = reach(tile);
+        const LONG tileDistance = distance(tile);
+        if (!nearest || tileReach > nearestReach || (tileReach == nearestReach && tileDistance < nearestDistance))
+        {
+            nearest = window;
+            nearestReach = tileReach;
+            nearestDistance = tileDistance;
+        }
+    }
+
+    return nearest;
+}
+
 void TilingTree::SplitLeaf(Node* leaf, HWND window, Orientation orientation, bool windowFirst)
 {
     // The leaf becomes a split holding its window and the new one side by side or stacked
@@ -374,6 +461,16 @@ TilingTree::Node* TilingTree::FindLeaf(HWND window) const noexcept
     };
 
     return find(m_root.get());
+}
+
+std::unique_ptr<TilingTree::Node>& TilingTree::SlotOf(const Node* node) noexcept
+{
+    if (!node->parent)
+    {
+        return m_root;
+    }
+
+    return node->parent->first.get() == node ? node->parent->first : node->parent->second;
 }
 
 void TilingTree::Collect(const Node* node, const RECT& rect, int spacing, HWND without, WindowRects& result)

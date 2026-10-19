@@ -61,6 +61,21 @@ public:
     bool MoveBeside(HWND window, HWND target, Side side);
 
     /**
+     * Swap window's tile with everything across the nearest divider on the given side of it,
+     * as with Win+Arrow. Tiles keep their places and sizes, the windows in them change places.
+     *
+     * @returns false if window is not in the tree, or no divider is on that side of it.
+     */
+    bool SwapToward(HWND window, Side side);
+
+    /**
+     * Put replacement in window's tile, as when windows on two monitors change places.
+     *
+     * @returns false if window is not in the tree, or replacement is null or already in it.
+     */
+    bool ReplaceWindow(HWND window, HWND replacement);
+
+    /**
      * @returns false if window is not in the tree.
      */
     bool Remove(HWND window);
@@ -108,6 +123,13 @@ public:
      */
     static RECT DropRect(const RECT& tile, Side side, int spacing) noexcept;
 
+    /**
+     * Of the tiles along the given edge of all tiles, the one nearest to point along that edge.
+     *
+     * @returns null if there are no tiles.
+     */
+    static HWND TileAtEdge(const WindowRects& tiles, Side edge, POINT point) noexcept;
+
 private:
     struct Node
     {
@@ -122,6 +144,7 @@ private:
     };
 
     Node* FindLeaf(HWND window) const noexcept;
+    std::unique_ptr<Node>& SlotOf(const Node* node) noexcept;
     void SplitLeaf(Node* leaf, HWND window, Orientation orientation, bool windowFirst);
     std::vector<std::pair<Node*, RECT>> Splits(const RECT& area, int spacing) const;
     static bool SetDividerPosition(Node* split, const RECT& rect, LONG position, int spacing) noexcept;
