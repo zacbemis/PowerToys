@@ -70,6 +70,10 @@ public:
     bool Untile(HWND window);
     void ReflowTiles();
 
+    // Win+Arrow swaps a tiled window with the tiles across the nearest divider that way.
+    // Returns false if the window is at the edge of the tiles.
+    bool SwapTile(HWND window, TilingTree::Side side);
+
     // Dragging a tiled window's border resizes the tiles next to it along with it
     void BeginTileResize(HWND window);
     void UpdateTileResize(HWND window);

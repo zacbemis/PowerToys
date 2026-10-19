@@ -356,6 +356,7 @@ public:
     bool BeginTileDrag(HWND window) noexcept;
     void UpdateTileDrag(HWND window, POINT cursor) noexcept;
     void EndTileDrag(HWND window, POINT cursor) noexcept;
+    void SwapTile(HWND window, DWORD vkCode) noexcept;
     void ToggleEditor() noexcept;
 
     LRESULT WndProc(HWND, UINT, WPARAM, LPARAM) noexcept;
@@ -878,6 +879,21 @@ void FancyZones::EndTileDrag(HWND window, POINT cursor) noexcept
     }
 }
 
+void FancyZones::SwapTile(HWND window, DWORD vkCode) noexcept
+{
+    auto workArea = WorkAreaTiling(window);
+    if (!workArea)
+    {
+        return;
+    }
+
+    const auto side = vkCode == VK_LEFT  ? TilingTree::Side::Left :
+                      vkCode == VK_RIGHT ? TilingTree::Side::Right :
+                      vkCode == VK_UP    ? TilingTree::Side::Top :
+                                           TilingTree::Side::Bottom;
+    workArea->SwapTile(window, side);
+}
+
 // IFancyZonesCallback
 IFACEMETHODIMP_(bool)
 FancyZones::OnKeyDown(PKBDLLHOOKSTRUCT info) noexcept
@@ -1136,7 +1152,11 @@ LRESULT FancyZones::WndProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         POINT ptScreen;
         GetPhysicalCursorPos(&ptScreen);
 
-        if (message == WM_PRIV_SNAP_HOTKEY)
+        if (message == WM_PRIV_SNAP_HOTKEY && WorkAreaTiling(GetForegroundWindow()))
+        {
+            SwapTile(GetForegroundWindow(), static_cast<DWORD>(lparam));
+        }
+        else if (message == WM_PRIV_SNAP_HOTKEY)
         {
             // We already checked in ShouldProcessSnapHotkey whether the foreground window is a candidate for zoning
             auto foregroundWindow = GetForegroundWindow();
@@ -1896,12 +1916,19 @@ void FancyZones::RefreshLayouts() noexcept
 
 bool FancyZones::ShouldProcessSnapHotkey(DWORD vkCode) noexcept
 {
+    // Win+Arrow moves tiled windows between tiles whether or not Windows Snap is overridden,
+    // except for maximized ones, which Windows restores or minimizes as usual
+    auto window = GetForegroundWindow();
+    if (WorkAreaTiling(window))
+    {
+        return !IsZoomed(window);
+    }
+
     if (!FancyZonesSettings::settings().overrideSnapHotkeys)
     {
         return false;
     }
 
-    auto window = GetForegroundWindow();
     if (!FancyZonesWindowProcessing::IsProcessableManually(window))
     {
         return false;

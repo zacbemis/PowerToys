@@ -412,6 +412,17 @@ void WorkArea::ReflowTiles()
     }
 }
 
+bool WorkArea::SwapTile(HWND window, TilingTree::Side side)
+{
+    if (!IsAutomaticTiling() || !AutomaticTiling::Tree(m_uniqueId).SwapToward(window, side))
+    {
+        return false;
+    }
+
+    ReflowTiles();
+    return true;
+}
+
 void WorkArea::BeginTileResize(HWND window)
 {
     m_resizingWindow = window;
