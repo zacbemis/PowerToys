@@ -1986,17 +1986,17 @@ void FancyZones::RefreshLayouts() noexcept
 
 bool FancyZones::ShouldProcessSnapHotkey(DWORD vkCode) noexcept
 {
-    // Win+Arrow moves tiled windows between tiles whether or not Windows Snap is overridden,
-    // except for maximized ones, which Windows restores or minimizes as usual
+    if (!FancyZonesSettings::settings().overrideSnapHotkeys)
+    {
+        return false;
+    }
+
+    // Win+Arrow moves tiled windows between tiles, except for maximized ones,
+    // which Windows restores or minimizes as usual
     auto window = GetForegroundWindow();
     if (WorkAreaTiling(window))
     {
         return !IsZoomed(window);
-    }
-
-    if (!FancyZonesSettings::settings().overrideSnapHotkeys)
-    {
-        return false;
     }
 
     if (!FancyZonesWindowProcessing::IsProcessableManually(window))
