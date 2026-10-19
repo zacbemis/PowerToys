@@ -355,6 +355,13 @@ bool WorkArea::Untile(HWND window)
         return false;
     }
 
+    ForgetTile(window);
+    ReflowTiles();
+    return true;
+}
+
+void WorkArea::ForgetTile(HWND window)
+{
     m_layoutWindows.Dismiss(window);
     m_misplacedWindows.erase(window);
     m_selfPlacingWindows.erase(window);
@@ -370,8 +377,6 @@ bool WorkArea::Untile(HWND window)
         m_liveResizePending = false;
         m_resizingWindow = nullptr;
     }
-    ReflowTiles();
-    return true;
 }
 
 void WorkArea::ReflowTiles()
@@ -420,6 +425,28 @@ bool WorkArea::SwapTile(HWND window, TilingTree::Side side)
     }
 
     ReflowTiles();
+    return true;
+}
+
+HWND WorkArea::TileAtEdge(TilingTree::Side edge, POINT point) const
+{
+    if (!IsAutomaticTiling() || !m_window)
+    {
+        return nullptr;
+    }
+
+    ScreenToClient(m_window, &point);
+    return TilingTree::TileAtEdge(AutomaticTiling::Tree(m_uniqueId).CalculateRects(TileArea(), AutomaticTiling::TileSpacing), edge, point);
+}
+
+bool WorkArea::ReplaceTile(HWND window, HWND replacement)
+{
+    if (!IsAutomaticTiling() || !AutomaticTiling::Tree(m_uniqueId).ReplaceWindow(window, replacement))
+    {
+        return false;
+    }
+
+    ForgetTile(window);
     return true;
 }
 

@@ -74,6 +74,12 @@ public:
     // Returns false if the window is at the edge of the tiles.
     bool SwapTile(HWND window, TilingTree::Side side);
 
+    // For windows changing places with a tile on another monitor: the tile along the given edge
+    // nearest to point (in screen coordinates), and putting the other window in a window's tile.
+    // The caller reflows both work areas once both windows have been replaced.
+    HWND TileAtEdge(TilingTree::Side edge, POINT point) const;
+    bool ReplaceTile(HWND window, HWND replacement);
+
     // Dragging a tiled window's border resizes the tiles next to it along with it
     void BeginTileResize(HWND window);
     void UpdateTileResize(HWND window);
@@ -101,6 +107,7 @@ private:
     
     void CalculateZoneSet();
     void SyncTiledWindows();
+    void ForgetTile(HWND window);
     void CheckTiles();
     void ForceTileSize(HWND window, const RECT& tile);
     RECT TileArea() const noexcept;

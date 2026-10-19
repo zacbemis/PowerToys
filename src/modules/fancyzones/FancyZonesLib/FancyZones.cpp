@@ -357,6 +357,7 @@ public:
     void UpdateTileDrag(HWND window, POINT cursor) noexcept;
     void EndTileDrag(HWND window, POINT cursor) noexcept;
     void SwapTile(HWND window, DWORD vkCode) noexcept;
+    WorkArea* WorkAreaToward(const WorkArea* workArea, TilingTree::Side side) const noexcept;
     void ToggleEditor() noexcept;
 
     LRESULT WndProc(HWND, UINT, WPARAM, LPARAM) noexcept;
@@ -891,7 +892,76 @@ void FancyZones::SwapTile(HWND window, DWORD vkCode) noexcept
                       vkCode == VK_RIGHT ? TilingTree::Side::Right :
                       vkCode == VK_UP    ? TilingTree::Side::Top :
                                            TilingTree::Side::Bottom;
-    workArea->SwapTile(window, side);
+    if (workArea->SwapTile(window, side))
+    {
+        return;
+    }
+
+    // At the edge of its tiles, the window changes places with the nearest tile on the next monitor that way
+    auto neighbor = WorkAreaToward(workArea, side);
+    RECT windowRect{};
+    if (!neighbor || !neighbor->IsAutomaticTiling() || !GetWindowRect(window, &windowRect))
+    {
+        return;
+    }
+
+    const auto facingEdge = side == TilingTree::Side::Left  ? TilingTree::Side::Right :
+                            side == TilingTree::Side::Right ? TilingTree::Side::Left :
+                            side == TilingTree::Side::Top   ? TilingTree::Side::Bottom :
+                                                              TilingTree::Side::Top;
+    const POINT center{ windowRect.left + (windowRect.right - windowRect.left) / 2, windowRect.top + (windowRect.bottom - windowRect.top) / 2 };
+    const HWND other = neighbor->TileAtEdge(facingEdge, center);
+    if (!other)
+    {
+        // A monitor without tiles yet gets the window to itself
+        workArea->Untile(window);
+        neighbor->Tile(window, nullptr);
+        return;
+    }
+
+    // Reflowing leaves maximized windows where they are, so a maximized one would stay on the wrong monitor
+    if (IsZoomed(other))
+    {
+        return;
+    }
+
+    if (workArea->ReplaceTile(window, other) && neighbor->ReplaceTile(other, window))
+    {
+        workArea->ReflowTiles();
+        neighbor->ReflowTiles();
+    }
+}
+
+WorkArea* FancyZones::WorkAreaToward(const WorkArea* workArea, TilingTree::Side side) const noexcept
+{
+    // The nearest work area entirely on that side and level with this one, so a monitor
+    // diagonally across doesn't count
+    const auto& from = workArea->GetWorkAreaRect();
+    WorkArea* nearest = nullptr;
+    LONG nearestGap = 0;
+    for (const auto& [_, candidate] : m_workAreaConfiguration.GetAllWorkAreas())
+    {
+        if (!candidate || candidate.get() == workArea)
+        {
+            continue;
+        }
+
+        const auto& to = candidate->GetWorkAreaRect();
+        const bool sideBySide = side == TilingTree::Side::Left || side == TilingTree::Side::Right;
+        const bool level = sideBySide ? to.top() < from.bottom() && to.bottom() > from.top() :
+                                        to.left() < from.right() && to.right() > from.left();
+        const LONG gap = side == TilingTree::Side::Left  ? from.left() - to.right() :
+                         side == TilingTree::Side::Right ? to.left() - from.right() :
+                         side == TilingTree::Side::Top   ? from.top() - to.bottom() :
+                                                           to.top() - from.bottom();
+        if (level && gap >= 0 && (!nearest || gap < nearestGap))
+        {
+            nearest = candidate.get();
+            nearestGap = gap;
+        }
+    }
+
+    return nearest;
 }
 
 // IFancyZonesCallback
