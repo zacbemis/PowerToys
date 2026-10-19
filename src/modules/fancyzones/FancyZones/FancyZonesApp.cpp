@@ -8,7 +8,6 @@
 #include <common/interop/shared_constants.h>
 
 #include <FancyZonesLib/Generated Files/resource.h>
-#include <FancyZonesLib/AutomaticTiling.h>
 #include <FancyZonesLib/FancyZonesData.h>
 #include <FancyZonesLib/FancyZonesWinHookEventIDs.h>
 #include <FancyZonesLib/Settings.h>
@@ -94,22 +93,19 @@ void FancyZonesApp::InitHooks()
         }
     }
 
-    std::vector<DWORD> events_to_subscribe = {
+    // Hide and minimize events are only acted on while automatic tiling is on, which can change at any time
+    std::array<DWORD, 10> events_to_subscribe = {
         EVENT_SYSTEM_MOVESIZESTART,
         EVENT_SYSTEM_MOVESIZEEND,
         EVENT_OBJECT_NAMECHANGE,
         EVENT_OBJECT_UNCLOAKED,
         EVENT_OBJECT_SHOW,
         EVENT_OBJECT_CREATE,
-        EVENT_OBJECT_DESTROY
+        EVENT_OBJECT_DESTROY,
+        EVENT_OBJECT_HIDE,
+        EVENT_SYSTEM_MINIMIZESTART,
+        EVENT_SYSTEM_MINIMIZEEND
     };
-
-    // Hide events are frequent, so only listen for them when automatic tiling needs them
-    if (AutomaticTiling::IsEnabled())
-    {
-        events_to_subscribe.insert(events_to_subscribe.end(), { EVENT_OBJECT_HIDE, EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND });
-    }
-
     for (const auto event : events_to_subscribe)
     {
         auto hook = SetWinEventHook(event, event, nullptr, WinHookProc, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);

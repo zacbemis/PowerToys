@@ -235,7 +235,7 @@ struct FancyZones : public winrt::implements<FancyZones, IFancyZones, IFancyZone
 {
 public:
     FancyZones(HINSTANCE hinstance, std::function<void()> disableModuleCallbackFunction) noexcept :
-        SettingsObserver({ SettingId::EditorHotkey, SettingId::WindowSwitching, SettingId::PrevTabHotkey, SettingId::NextTabHotkey, SettingId::SpanZonesAcrossMonitors, SettingId::MonitorRotation, SettingId::MonitorRotationHotkey }),
+        SettingsObserver({ SettingId::EditorHotkey, SettingId::WindowSwitching, SettingId::PrevTabHotkey, SettingId::NextTabHotkey, SettingId::SpanZonesAcrossMonitors, SettingId::MonitorRotation, SettingId::MonitorRotationHotkey, SettingId::AutomaticTiling }),
         m_hinstance(hinstance),
         m_draggingState([this]() {
             PostMessageW(m_window, WM_PRIV_LOCATIONCHANGE, NULL, NULL);
@@ -314,18 +314,24 @@ public:
             }
             break;
 
-        // Only subscribed to when automatic tiling is enabled
+        // Hide events are frequent, so they are only passed on when automatic tiling needs them
         case EVENT_OBJECT_HIDE:
-            if (data->idObject == OBJID_WINDOW)
+            if (data->idObject == OBJID_WINDOW && AutomaticTiling::IsEnabled())
             {
                 PostMessageW(m_window, WM_PRIV_WINDOWHIDDEN, wparam, lparam);
             }
             break;
         case EVENT_SYSTEM_MINIMIZESTART:
-            PostMessageW(m_window, WM_PRIV_WINDOWHIDDEN, wparam, lparam);
+            if (AutomaticTiling::IsEnabled())
+            {
+                PostMessageW(m_window, WM_PRIV_WINDOWHIDDEN, wparam, lparam);
+            }
             break;
         case EVENT_SYSTEM_MINIMIZEEND:
-            PostMessageW(m_window, WM_PRIV_WINDOWRESTORED, wparam, lparam);
+            if (AutomaticTiling::IsEnabled())
+            {
+                PostMessageW(m_window, WM_PRIV_WINDOWRESTORED, wparam, lparam);
+            }
             break;
         }
     }
@@ -508,12 +514,6 @@ FancyZones::Run() noexcept
     auto monitors = MonitorUtils::IdentifyMonitors();
     AppliedLayouts::instance().AdjustWorkAreaIds(monitors);
     AppZoneHistory::instance().AdjustWorkAreaIds(monitors);
-
-    // Turn Windows Snap back on if a run with automatic tiling didn't exit cleanly and tiling is off now
-    if (!AutomaticTiling::IsEnabled())
-    {
-        AutomaticTiling::SuppressWindowsSnap(false);
-    }
 
     PostMessage(m_window, WM_PRIV_INIT, 0, 0);
 }
@@ -1540,11 +1540,6 @@ void FancyZones::UpdateWorkAreas(bool updateWindowPositions) noexcept
 
 void FancyZones::SyncWindowsSnap() noexcept
 {
-    if (!AutomaticTiling::IsEnabled())
-    {
-        return;
-    }
-
     bool tiling = false;
     for (const auto& [_, workArea] : m_workAreaConfiguration.GetAllWorkAreas())
     {
@@ -1867,6 +1862,13 @@ void FancyZones::SettingsUpdate(SettingId id)
         AbortMoveSize();
         m_workAreaConfiguration.Clear();
         PostMessageW(m_window, WM_PRIV_INIT, NULL, NULL);
+    }
+    break;
+    case SettingId::AutomaticTiling:
+    {
+        // Monitors with "No layout" start or stop tiling their windows, and Windows Snap follows
+        m_tileDrag = {};
+        RefreshLayouts();
     }
     break;
     default:

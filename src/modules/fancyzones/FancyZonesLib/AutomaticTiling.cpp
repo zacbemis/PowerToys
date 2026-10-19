@@ -2,18 +2,17 @@
 #include "AutomaticTiling.h"
 
 #include <filesystem>
-#include <string_view>
 #include <unordered_map>
 
 #include <common/SettingsAPI/settings_helpers.h>
 #include <common/utils/json.h>
 
 #include <FancyZonesLib/ModuleConstants.h>
+#include <FancyZonesLib/Settings.h>
 
 // Non-Localizable strings
 namespace NonLocalizable
 {
-    const wchar_t EnableVariableName[] = L"POWERTOYS_FANCYZONES_AUTOTILE";
     const wchar_t WindowsSnapFileName[] = L"\\automatic-tiling-windows-snap.json";
     const wchar_t DockMovingID[] = L"dock-moving";
 }
@@ -47,13 +46,7 @@ namespace
 
 bool AutomaticTiling::IsEnabled() noexcept
 {
-    static const bool enabled = [] {
-        wchar_t value[8]{};
-        const DWORD length = GetEnvironmentVariableW(NonLocalizable::EnableVariableName, value, ARRAYSIZE(value));
-        return length > 0 && length < ARRAYSIZE(value) && std::wstring_view(value) == L"1";
-    }();
-
-    return enabled;
+    return FancyZonesSettings::settings().automaticTiling;
 }
 
 TilingTree& AutomaticTiling::Tree(const FancyZonesDataTypes::WorkAreaId& workAreaId)

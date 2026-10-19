@@ -3,9 +3,8 @@
 #include <FancyZonesLib/FancyZonesDataTypes.h>
 #include <FancyZonesLib/TilingTree.h>
 
-// Phase 0 spike of Automatic FancyZones: Hyprland style automatic tiling.
-// Enabled by setting POWERTOYS_FANCYZONES_AUTOTILE=1 in the environment before PowerToys starts.
-// Monitors using the "No layout" (Blank) layout then tile their windows automatically.
+// Automatic FancyZones: Hyprland style automatic tiling.
+// When the automatic tiling setting is on, monitors using the "No layout" (Blank) layout tile their windows automatically.
 // All state is accessed from the FancyZones main thread only.
 namespace AutomaticTiling
 {

@@ -226,6 +226,16 @@
 
                 <controls:SettingsGroup x:Uid="FancyZones_Windows" IsEnabled="{x:Bind ViewModel.IsEnabled, Mode=OneWay}">
 
+                    <tkcontrols:SettingsCard
+                        Name="FancyZonesAutomaticTiling"
+                        x:Uid="FancyZones_AutomaticTiling"
+                        HeaderIcon="{ui:FontIcon Glyph=&#xE8A9;}">
+                        <ToggleSwitch
+                            x:Uid="ToggleSwitch"
+                            AutomationProperties.Name="FancyZonesAutomaticTilingToggle"
+                            IsOn="{x:Bind ViewModel.AutomaticTiling, Mode=TwoWay}" />
+                    </tkcontrols:SettingsCard>
+
                     <tkcontrols:SettingsExpander
                         Name="FancyZonesWindowBehaviorGroupSettings"
                         x:Uid="FancyZones_WindowBehavior_GroupSettings"

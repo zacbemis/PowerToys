@@ -790,8 +790,9 @@ void WorkArea::CalculateZoneSet()
     {
         SyncTiledWindows();
     }
-    else if (AutomaticTiling::IsEnabled())
+    else
     {
+        // Another layout was applied, or automatic tiling was turned off
         AutomaticTiling::EraseTree(m_uniqueId);
     }
 }

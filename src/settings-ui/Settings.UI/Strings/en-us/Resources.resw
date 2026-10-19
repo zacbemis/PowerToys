@@ -3589,6 +3589,12 @@ Right-click to remove the key combination, thereby deactivating the shortcut.</v
   <data name="FancyZones_AllowChildWindowSnap.Content" xml:space="preserve">
     <value>Allow child windows snapping</value>
   </data>
+  <data name="FancyZones_AutomaticTiling.Header" xml:space="preserve">
+    <value>Tile windows automatically</value>
+  </data>
+  <data name="FancyZones_AutomaticTiling.Description" xml:space="preserve">
+    <value>On monitors with no layout, windows are arranged side by side as they open and close. Drag a window onto another to place it, or drag a border to resize. Snapping windows to screen edges is turned off while this is on</value>
+  </data>
   <data name="Shell_WhatsNew.Content" xml:space="preserve">
     <value>What's new</value>
   </data>
