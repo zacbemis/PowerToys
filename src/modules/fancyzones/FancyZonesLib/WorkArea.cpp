@@ -2,6 +2,7 @@
 #include "WorkArea.h"
 
 #include <common/logger/logger.h>
+#include <common/utils/elevation.h>
 
 #include "FancyZonesData/AppliedLayouts.h"
 #include "FancyZonesData/AppZoneHistory.h"
@@ -45,11 +46,13 @@ namespace TileSizeCheck
         return frame;
     }
 
-    // Windows that can't be resized stay where they are
+    // Windows that can't be resized stay where they are, and so do elevated windows,
+    // which can't be moved unless PowerToys runs elevated too
     bool CanTile(HWND window) noexcept
     {
         return FancyZonesWindowProcessing::IsProcessableAutomatically(window) &&
-               FancyZonesWindowUtils::HasStyle(GetWindowLong(window, GWL_STYLE), WS_THICKFRAME);
+               FancyZonesWindowUtils::HasStyle(GetWindowLong(window, GWL_STYLE), WS_THICKFRAME) &&
+               (is_process_elevated() || !IsProcessOfWindowElevated(window));
     }
 }
 
