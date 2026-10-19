@@ -1727,6 +1727,7 @@ static void StopInteraction()
     const bool wasActive = g_interaction.phase == InteractionPhase::Active;
     const bool wasIdle = g_interaction.phase == InteractionPhase::Idle;
     const InteractionAction action = g_interaction.action;
+    const HWND target = g_interaction.target;
     if (wasActive)
     {
         FinalizeTargetUpdate();
@@ -1737,6 +1738,11 @@ static void StopInteraction()
     }
     g_interaction = {};
     HideOverlay();
+    if (wasActive && target)
+    {
+        // Pairs with the start event sent in BeginInteraction
+        NotifyWinEvent(EVENT_SYSTEM_MOVESIZEEND, target, OBJID_WINDOW, CHILDID_SELF);
+    }
 #ifdef GRABANDMOVE_PERF_DIAGNOSTICS
     if (wasActive)
     {
@@ -2045,6 +2051,10 @@ static bool BeginInteraction(InteractionAction action, MouseButton button, HWND 
     ShowOverlay(
         windowRect,
         action == InteractionAction::Resize ? CursorForHandle(g_interaction.resizeHandle) : g_curSizeAll);
+
+    // Windows only reports moves and resizes made through a window's own frame. Reporting this one
+    // the same way lets apps that follow window drags, such as FancyZones, snap the window when it's dropped.
+    NotifyWinEvent(EVENT_SYSTEM_MOVESIZESTART, hwnd, OBJID_WINDOW, CHILDID_SELF);
     TraceShortcutUse(
         true,
         action == InteractionAction::Resize ? GrabAndMoveShortcutAction::Resize : GrabAndMoveShortcutAction::Move,
