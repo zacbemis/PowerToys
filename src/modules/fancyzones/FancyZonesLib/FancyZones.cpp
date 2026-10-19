@@ -362,6 +362,7 @@ protected:
 
 private:
     void UpdateWorkAreas(bool updateWindowPositions) noexcept;
+    void SyncWindowsSnap() noexcept;
     bool ShouldWorkAreasBeRecreated(const std::vector<FancyZonesDataTypes::MonitorId>& monitors, const GUID& virtualDesktop, const std::unordered_map<HMONITOR, std::unique_ptr<WorkArea>>& workAreas) noexcept;
     void CycleWindows(bool reverse) noexcept;
     void RotateWindowsAcrossMonitors(bool reverse) noexcept;
@@ -508,6 +509,12 @@ FancyZones::Run() noexcept
     AppliedLayouts::instance().AdjustWorkAreaIds(monitors);
     AppZoneHistory::instance().AdjustWorkAreaIds(monitors);
 
+    // Turn Windows Snap back on if a run with automatic tiling didn't exit cleanly and tiling is off now
+    if (!AutomaticTiling::IsEnabled())
+    {
+        AutomaticTiling::SuppressWindowsSnap(false);
+    }
+
     PostMessage(m_window, WM_PRIV_INIT, 0, 0);
 }
 
@@ -515,6 +522,7 @@ FancyZones::Run() noexcept
 IFACEMETHODIMP_(void)
 FancyZones::Destroy() noexcept
 {
+    AutomaticTiling::SuppressWindowsSnap(false);
     m_workAreaConfiguration.Clear();
     BufferedPaintUnInit();
     if (m_window)
@@ -1526,6 +1534,24 @@ void FancyZones::UpdateWorkAreas(bool updateWindowPositions) noexcept
             }
         }
     }
+
+    SyncWindowsSnap();
+}
+
+void FancyZones::SyncWindowsSnap() noexcept
+{
+    if (!AutomaticTiling::IsEnabled())
+    {
+        return;
+    }
+
+    bool tiling = false;
+    for (const auto& [_, workArea] : m_workAreaConfiguration.GetAllWorkAreas())
+    {
+        tiling |= workArea && workArea->IsAutomaticTiling();
+    }
+
+    AutomaticTiling::SuppressWindowsSnap(tiling);
 }
 
 bool FancyZones::ShouldWorkAreasBeRecreated(const std::vector<FancyZonesDataTypes::MonitorId>& monitors, const GUID& virtualDesktop, const std::unordered_map<HMONITOR, std::unique_ptr<WorkArea>>& workAreas) noexcept
@@ -1862,6 +1888,8 @@ void FancyZones::RefreshLayouts() noexcept
             }
         }
     }
+
+    SyncWindowsSnap();
 }
 
 bool FancyZones::ShouldProcessSnapHotkey(DWORD vkCode) noexcept
