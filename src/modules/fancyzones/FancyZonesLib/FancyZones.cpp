@@ -1916,6 +1916,12 @@ bool FancyZones::ShouldProcessSnapHotkey(DWORD vkCode) noexcept
         return false;
     }
 
+    // Tiles aren't zones to move between, so Win+Arrow stays with Windows there
+    if (workArea->IsAutomaticTiling())
+    {
+        return false;
+    }
+
     const auto& layout = workArea->GetLayout();
     if (!layout)
     {

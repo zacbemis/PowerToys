@@ -79,8 +79,9 @@ bool WindowKeyboardSnap::SnapHotkeyBasedOnZoneNumber(HWND window, DWORD vkCode, 
             if (activeWorkAreas.contains(*currMonitor))
             {
                 const auto& workArea = activeWorkAreas.at(*currMonitor);
-            
-                if (MoveByDirectionAndIndex(window, vkCode, false /* cycle through zones */, workArea.get()))
+
+                // Windows only join automatic tiles when they open or are dragged there
+                if (!workArea->IsAutomaticTiling() && MoveByDirectionAndIndex(window, vkCode, false /* cycle through zones */, workArea.get()))
                 {
                     // unassign from previous work area
                     for (auto& [_, prevWorkArea] : activeWorkAreas)
@@ -152,7 +153,7 @@ bool WindowKeyboardSnap::SnapBasedOnPositionOnAnotherMonitor(HWND window, RECT w
             {
                 const auto& workArea = activeWorkAreas.at(monitor);
                 const auto& layout = workArea->GetLayout();
-                if (layout)
+                if (layout && !workArea->IsAutomaticTiling())
                 {
                     const auto& zones = layout->Zones();
                     for (const auto& [zoneId, zone] : zones)
